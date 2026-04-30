@@ -1,0 +1,6 @@
+{
+  "name": "ScholarAgent",
+  "description": "A desktop-like AI task manager MVP for graduate students with intent routing and a minimalist Apple-like design.",
+  "requestFramePermissions": [],
+  "majorCapabilities": []
+}
