@@ -50,11 +50,22 @@ jobs:
 
       - name: Install dependencies
         run: npm install
+        env:
+          npm_config_platform: darwin
+          npm_config_arch: x64
+
+      - name: Rebuild native modules for Electron
+        run: npx electron-rebuild || true
 
       - name: Build macOS installer
         run: npm run build:mac
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: false
+          DEBUG: electron-builder
+
+      - name: List release output
+        if: always()
+        run: ls -la release/ || echo "No release directory"
 
       - name: Upload macOS artifact
         uses: actions/upload-artifact@v4
