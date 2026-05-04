@@ -25,7 +25,8 @@ jobs:
         run: npm install
 
       - name: Build Windows installer
-        run: npm run build:exe
+        # 加上 -p never 禁用 electron-builder 的自动发布逻辑
+        run: npm run build:exe -- -p never
 
       - name: Upload Windows artifact
         uses: actions/upload-artifact@v4
@@ -58,7 +59,8 @@ jobs:
         run: npx electron-rebuild || true
 
       - name: Build macOS installer
-        run: npm run build:mac
+        # 加上 -p never 禁用 electron-builder 的自动发布逻辑
+        run: npm run build:mac -- -p never
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: false
           DEBUG: electron-builder
@@ -96,5 +98,7 @@ jobs:
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
+          # 使用内置的 GITHUB_TOKEN 进行发布
+          token: ${{ secrets.GITHUB_TOKEN }}
           files: artifacts/*
           generate_release_notes: true
