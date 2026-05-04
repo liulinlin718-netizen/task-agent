@@ -3,7 +3,7 @@ name: Build & Release
 on:
   push:
     tags:
-      - 'v*'  # 当你推送 v1.0.0 这样的 tag 时自动触发构建
+      - 'v*'
 
 jobs:
   build-windows:
@@ -15,7 +15,11 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
+
+      - name: Remove China mirror config
+        run: |
+          echo "" > .npmrc
 
       - name: Install dependencies
         run: npm install
@@ -38,7 +42,11 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
+
+      - name: Remove China mirror config
+        run: |
+          echo "" > .npmrc
 
       - name: Install dependencies
         run: npm install
@@ -46,7 +54,7 @@ jobs:
       - name: Build macOS installer
         run: npm run build:mac
         env:
-          CSC_IDENTITY_AUTO_DISCOVERY: false  # 跳过代码签名（个人开发者阶段）
+          CSC_IDENTITY_AUTO_DISCOVERY: false
 
       - name: Upload macOS artifact
         uses: actions/upload-artifact@v4
