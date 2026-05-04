@@ -118,7 +118,8 @@ const StoreContext = createContext<StoreContextType | null>(null);
 
 export function StoreProvider({ children }: { children: React.ReactNode }) {
   const [state, setState] = useState<AppState>(() => {
-    const saved = localStorage.getItem('scholaragent-state');
+    // Try new key first, fall back to old key for backward compatibility
+    const saved = localStorage.getItem('taskagent-state') || localStorage.getItem('scholaragent-state');
     if (saved) {
       const p = JSON.parse(saved);
       // migrations
@@ -147,13 +148,13 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
   });
 
   useEffect(() => {
-    localStorage.setItem('scholaragent-state', JSON.stringify(state));
+    localStorage.setItem('taskagent-state', JSON.stringify(state));
   }, [state]);
 
   // Cross-window sync: when another Electron window updates localStorage, sync here
   useEffect(() => {
     const handleStorage = (e: StorageEvent) => {
-      if (e.key === 'scholaragent-state' && e.newValue) {
+      if (e.key === 'taskagent-state' && e.newValue) {
         try {
           const newState = JSON.parse(e.newValue);
           setState(newState);

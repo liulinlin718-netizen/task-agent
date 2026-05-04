@@ -1,10 +1,10 @@
-# ScholarAgent (TaskAgent) 🧠
+# TaskAgent 🧠
 
 [![Electron](https://img.shields.io/badge/Electron-41.3.0-blue.svg)](https://www.electronjs.org/)
 [![React](https://img.shields.io/badge/React-19.0.0-61dafb.svg)](https://react.dev/)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 
-> **ScholarAgent** 是一款专为研究生和高知人群打造的 **AI 原生 (AI-Native)** 桌面任务管理助手。它不仅仅是一个 Todo List，更是一个能够理解你意图、陪伴你科研、并缓解进度焦虑的智能伴侣。
+> **TaskAgent** 是一款 **AI 原生 (AI-Native)** 桌面任务管理助手。它不仅仅是一个 Todo List，更是一个能够理解你意图、并缓解进度焦虑的智能伴侣。
 
 ---
 

@@ -1,6 +1,6 @@
-﻿# ScholarAgent · 产品需求文档 (PRD)
+# TaskAgent · 产品需求文档 (PRD)
 
-> **文档定位**：本文档定义了 ScholarAgent（专为研究生及高知人群打造的桌面端 AI 任务伴侣）V1.0.0 RC 版本的核心业务逻辑、交互表现、技术架构及底层 Agent 设计。供产品评审、技术开发及求职展示参考。
+> **文档定位**：本文档定义了 TaskAgent（桌面端 AI 任务伴侣）V1.0.0 RC 版本的核心业务逻辑、交互表现、技术架构及底层 Agent 设计。供产品评审、技术开发及求职展示参考。
 
 ---
 
@@ -8,8 +8,8 @@
 
 | 项目 | 内容 |
 | :--- | :--- |
-| **产品名称** | ScholarAgent（科研任务助理） |
-| **产品代号** | scholar-agent |
+| **产品名称** | TaskAgent（智能任务助理） |
+| **产品代号** | task-agent |
 | **当前版本** | V1.0.0 (Release Candidate) |
 | **文档状态** | 已完成开发 · 已打包发布 |
 | **终端平台** | Windows 桌面端 Native（基于 Electron 架构，可扩展至 macOS） |
@@ -47,7 +47,7 @@
 
 ### 4.1 市场现状与产品定位
 
-当前效率工具市场正处于从 **"记录工具（System of Record）"** 向 **"执行系统（System of Agency）"** 跨越的拐点。传统 Todo 应用停留在被动记录层面，无法提供主动的认知辅助。ScholarAgent 瞄准这一转型窗口，定位为 **AI-Native 的桌面级任务伴侣**——不仅帮用户"记住"，更帮用户"想清楚"和"做下去"。
+当前效率工具市场正处于从 **"记录工具（System of Record）"** 向 **"执行系统（System of Agency）"** 跨越的拐点。传统 Todo 应用停留在被动记录层面，无法提供主动的认知辅助。TaskAgent 瞄准这一转型窗口，定位为 **AI-Native 的桌面级任务伴侣**——不仅帮用户"记住"，更帮用户"想清楚"和"做下去"。
 
 ### 4.2 目标用户画像
 
@@ -80,7 +80,7 @@
 | **All-in-one 派** | Notion, 飞书多维表格 | 功能全面 | 过于沉重，配置成本极高，非桌面原生，启动慢、打断心流 |
 | **AI 对话派** | ChatGPT, Kimi | 智能对话强 | 无持久化任务状态，对话即丢，无桌面集成 |
 
-**ScholarAgent 核心差异化破局点：**
+**TaskAgent 核心差异化破局点：**
 1. **桌面极简原生**：悬浮球 + 磁吸侧边栏，随叫随到、用完即走
 2. **进度滑块替代打钩**：量化模糊任务，正向反馈驱动
 3. **意图驱动的双 Agent 协同**：自然语言直接操控任务状态
@@ -200,7 +200,7 @@
 
 | 设计原则 | 实现方式 |
 | :--- | :--- |
-| **Local-First 数据存储** | 全量数据通过 localStorage（key: scholaragent-state）持久化于本地 AppData 目录，不经过任何开发者服务器 |
+| **Local-First 数据存储** | 全量数据通过 localStorage（key: taskagent-state）持久化于本地 AppData 目录，不经过任何开发者服务器 |
 | **API Key 客户端隔离** | Key 仅保存在用户本地，通过设置页手动输入，源码与 Git 仓库中无任何硬编码凭证 |
 | **沙箱安全** | Electron contextIsolation: true + nodeIntegration: false，渲染进程无法直接访问 Node.js API |
 | **安全桥接** | 所有系统级操作通过 contextBridge.exposeInMainWorld 暴露最小权限 API |

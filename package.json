@@ -1,5 +1,5 @@
 {
-  "name": "scholar-agent",
+  "name": "task-agent",
   "private": true,
   "version": "2.0.0",
   "type": "module",
@@ -15,8 +15,8 @@
     "build:mac": "npm run build && electron-builder build --mac"
   },
   "build": {
-    "appId": "com.scholaragent.app",
-    "productName": "ScholarAgent",
+    "appId": "com.taskagent.app",
+    "productName": "TaskAgent",
     "directories": {
       "output": "release"
     },
