@@ -6,6 +6,7 @@ let mainWindow = null;
 let ballWindow = null;
 let taskCenterWindow = null;
 
+const isDev = !app.isPackaged;
 const VITE_DEV_URL = 'http://localhost:3000';
 const SNAP_THRESHOLD = 50;
 const TC_STRIP_W = 6;
@@ -20,7 +21,11 @@ function createMainWindow() {
     show: true,
     backgroundColor: '#ffffff', // Prevents transparent flash before React renders
   });
-  mainWindow.loadURL(VITE_DEV_URL);
+  if (isDev) {
+    mainWindow.loadURL(VITE_DEV_URL);
+  } else {
+    mainWindow.loadFile(path.join(__dirname, 'dist/index.html'));
+  }
   mainWindow.on('closed', () => {
     mainWindow = null;
     if (ballWindow && !ballWindow.isDestroyed()) ballWindow.close();
@@ -41,7 +46,11 @@ function createBallWindow() {
     resizable: false, skipTaskbar: true, hasShadow: false, show: false,
   });
   // ballWindow.webContents.openDevTools({ mode: 'detach' });
-  ballWindow.loadURL(`${VITE_DEV_URL}?window=ball`);
+  if (isDev) {
+    ballWindow.loadURL(`${VITE_DEV_URL}?window=ball`);
+  } else {
+    ballWindow.loadFile(path.join(__dirname, 'dist/index.html'), { query: { window: 'ball' } });
+  }
   // ballWindow.once('ready-to-show', () => ballWindow.show());
 
   ballWindow.on('closed', () => { ballWindow = null; });
@@ -59,7 +68,11 @@ function createTaskCenterWindow() {
     resizable: false, skipTaskbar: true, hasShadow: false, show: false,
   });
   // taskCenterWindow.webContents.openDevTools({ mode: 'detach' });
-  taskCenterWindow.loadURL(`${VITE_DEV_URL}?window=taskcenter`);
+  if (isDev) {
+    taskCenterWindow.loadURL(`${VITE_DEV_URL}?window=taskcenter`);
+  } else {
+    taskCenterWindow.loadFile(path.join(__dirname, 'dist/index.html'), { query: { window: 'taskcenter' } });
+  }
   // taskCenterWindow.once('ready-to-show', () => taskCenterWindow.show());
 
   taskCenterWindow.on('closed', () => { taskCenterWindow = null; });
@@ -172,13 +185,13 @@ ipcMain.on('ball:expand', () => {
   if (!ballWindow || ballWindow.isDestroyed()) return;
   const [cx, cy] = ballWindow.getPosition();
   const { width: sw, height: sh } = screen.getPrimaryDisplay().workAreaSize;
-  
+
   let newX = cx - (380 - 48);
   let newY = cy - (520 - 48);
-  
+
   if (cx < 380 / 2) newX = cx;
   if (cy < 520 / 2) newY = cy;
-  
+
   if (newX + 380 > sw) newX = sw - 380;
   if (newY + 520 > sh) newY = sh - 520;
   if (newX < 0) newX = 0;
@@ -194,10 +207,10 @@ ipcMain.on('ball:collapse', () => {
   if (!ballWindow || ballWindow.isDestroyed()) return;
   const b = ballWindow.getBounds();
   const { width: sw, height: sh } = screen.getPrimaryDisplay().workAreaSize;
-  
+
   let bx = b.x + ballExpandOffset.x;
   let by = b.y + ballExpandOffset.y;
-  
+
   if (bx + 48 > sw) bx = sw - 48;
   if (by + 48 > sh) by = sh - 48;
   if (bx < 0) bx = 0;
@@ -212,7 +225,7 @@ ipcMain.on('ball:check-snap', (event) => {
   const [x] = ballWindow.getPosition();
   const b = ballWindow.getBounds();
   const { width: sw } = screen.getPrimaryDisplay().workAreaSize;
-  
+
   const BALL_MARGIN = 0; // Fixed distance from edge
   const center = x + b.width / 2;
   const SNAP_DIST = 100;

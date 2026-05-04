@@ -1,5 +1,5 @@
 {
-  "name": "react-example",
+  "name": "scholar-agent",
   "private": true,
   "version": "0.0.0",
   "type": "module",
@@ -10,7 +10,29 @@
     "build": "vite build",
     "preview": "vite preview",
     "clean": "rm -rf dist",
-    "lint": "tsc --noEmit"
+    "lint": "tsc --noEmit",
+    "build:exe": "npm run build && electron-builder build --win"
+  },
+  "build": {
+    "appId": "com.scholaragent.app",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "dist/**/*",
+      "electron-main.cjs",
+      "electron-preload.cjs",
+      "package.json"
+    ],
+    "win": {
+      "target": "nsis"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "shortcutName": "科研任务助理"
+    }
   },
   "dependencies": {
     "@base-ui/react": "^1.4.1",
@@ -43,6 +65,7 @@
     "autoprefixer": "^10.4.21",
     "concurrently": "^9.2.1",
     "electron": "^41.3.0",
+    "electron-builder": "^26.8.1",
     "tailwindcss": "^4.1.14",
     "tsx": "^4.21.0",
     "typescript": "~5.8.2",
