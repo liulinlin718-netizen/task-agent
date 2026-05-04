@@ -70,20 +70,11 @@ npm run build:mac
 
 ---
 
-## 📄 产品需求文档 (PRD)
-
-为了更深入了解本项目的设计哲学和技术实现，请参阅：
-*   [正式版 PRD (V1.0.0)](./PRD_ScholarAgent.md)
-*   [最小 MVP 验证文档](./PRD_ScholarAgent_MVP_v0.1.md)
-
----
 
 ## 🤝 贡献与反馈
 
 本项目目前处于 **V1.0.0 (Release Candidate)** 阶段。欢迎任何形式的 Issue 和 Pull Request！
 
-**开发者**: [你的名字/GitHub ID]
-**联系方式**: [你的邮箱]
 
 ---
 
