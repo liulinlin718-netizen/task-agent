@@ -138,7 +138,7 @@ function TaskCenterContent() {
             height: '100%',
             background: 'linear-gradient(180deg, #3b82f6 0%, #2563eb 50%, #3b82f6 100%)',
             borderRadius: snappedEdge === 'right' ? '3px 0 0 3px' : '0 3px 3px 0',
-            opacity: 0.7,
+            opacity: 0.6,
           }}
         />
       </div>
@@ -155,7 +155,7 @@ function TaskCenterContent() {
       onMouseLeave={handlePanelLeave}
       className="w-full h-full flex flex-col rounded-2xl overflow-hidden relative"
       style={{
-        background: 'rgba(15,15,20,0.90)',
+        background: 'rgba(15,15,20,0.96)',
         backdropFilter: 'blur(24px)',
         border: '1px solid rgba(255,255,255,0.08)',
         boxShadow: '0 8px 40px rgba(0,0,0,0.5)',
