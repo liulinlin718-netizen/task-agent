@@ -128,11 +128,6 @@ function FloatingBallContent() {
             }}
           >
             <Sparkles className="w-5 h-5 text-white drop-shadow-lg pointer-events-none" />
-            <motion.div
-              className="absolute inset-0 border-2 border-blue-400/40 rounded-full"
-              animate={{ scale: [1, 1.25, 1], opacity: [0.5, 0, 0.5] }}
-              transition={{ duration: 2.5, repeat: Infinity, ease: 'easeInOut' }}
-            />
           </motion.div>
         ) : (
           <motion.div

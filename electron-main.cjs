@@ -75,7 +75,7 @@ function createBallWindow() {
 function createTaskCenterWindow() {
   const { width: sw, height: sh } = screen.getPrimaryDisplay().workAreaSize;
   taskCenterWindow = new BrowserWindow({
-    width: 320, height: 480, x: sw - 360, y: Math.round((sh - 480) / 2),
+    width: TC_STRIP_W, height: 480, x: sw - TC_STRIP_W, y: Math.round((sh - 480) / 2),
     webPreferences: {
       preload: path.join(__dirname, 'electron-preload.cjs'),
       contextIsolation: true, nodeIntegration: false, zoomFactor: 1,
