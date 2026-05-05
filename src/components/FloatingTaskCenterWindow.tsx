@@ -129,13 +129,19 @@ function TaskCenterContent() {
     return (
       <div
         onMouseEnter={handleEdgeHover}
-        className="w-full h-full cursor-pointer flex items-center justify-center"
-        style={{
-          background: 'linear-gradient(180deg, #2563eb 0%, #3b82f6 50%, #60a5fa 100%)',
-          borderRadius: snappedEdge === 'right' ? '4px 0 0 4px' : '0 4px 4px 0',
-          opacity: 0.7,
-        }}
-      />
+        className="w-full h-full cursor-pointer flex"
+        style={{ background: 'transparent', justifyContent: snappedEdge === 'right' ? 'flex-end' : 'flex-start' }}
+      >
+        <div
+          style={{
+            width: '3px',
+            height: '100%',
+            background: 'linear-gradient(180deg, #3b82f6 0%, #2563eb 50%, #3b82f6 100%)',
+            borderRadius: snappedEdge === 'right' ? '3px 0 0 3px' : '0 3px 3px 0',
+            opacity: 0.7,
+          }}
+        />
+      </div>
     );
   }
 

@@ -143,7 +143,7 @@ ipcMain.handle('data:export', async (_event, password) => {
     const data = fs.readFileSync(STORE_FILE, 'utf-8');
     const encrypted = encryptData(data, password);
     const { filePath } = await dialog.showSaveDialog({
-      defaultPath: `taskagent-backup-${new Date().toISOString().slice(0,10)}.taskagent`,
+      defaultPath: `taskagent-backup-${new Date().toISOString().slice(0, 10)}.taskagent`,
       filters: [{ name: 'TaskAgent Backup', extensions: ['taskagent'] }],
     });
     if (!filePath) return false;
@@ -413,10 +413,10 @@ app.whenReady().then(() => {
         // 135deg linear gradient (top-left → bottom-right), matching floating ball CSS
         const t = (x + y) / (2 * (size - 1)); // 0=top-left, 1=bottom-right
         // #2563eb → #3b82f6 → #60a5fa (BGRA order)
-        buf[i]   = Math.round(235 + (250 - 235) * t); // B
-        buf[i+1] = Math.round(99  + (165 - 99)  * t); // G
-        buf[i+2] = Math.round(37  + (96  - 37)  * t); // R
-        buf[i+3] = dist <= r ? 255 : Math.round(255 * Math.max(0, 1 - (dist - r) / 0.8));
+        buf[i] = Math.round(235 + (250 - 235) * t); // B
+        buf[i + 1] = Math.round(99 + (165 - 99) * t); // G
+        buf[i + 2] = Math.round(37 + (96 - 37) * t); // R
+        buf[i + 3] = dist <= r ? 255 : Math.round(255 * Math.max(0, 1 - (dist - r) / 0.8));
       }
     }
   }
