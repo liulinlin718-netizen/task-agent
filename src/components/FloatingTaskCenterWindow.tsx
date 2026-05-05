@@ -129,7 +129,7 @@ function TaskCenterContent() {
     return (
       <div
         onMouseEnter={handleEdgeHover}
-        className="w-full h-full cursor-pointer"
+        className="w-full h-full cursor-pointer flex items-center justify-center"
         style={{
           background: 'linear-gradient(180deg, #2563eb 0%, #3b82f6 50%, #60a5fa 100%)',
           borderRadius: snappedEdge === 'right' ? '4px 0 0 4px' : '0 4px 4px 0',

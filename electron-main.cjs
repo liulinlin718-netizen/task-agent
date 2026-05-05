@@ -15,7 +15,7 @@ const STORE_FILE = path.join(app.getPath('userData'), 'taskagent-data.json');
 const isDev = !app.isPackaged;
 const VITE_DEV_URL = 'http://localhost:3000';
 const SNAP_THRESHOLD = 50;
-const TC_STRIP_W = 4;
+const TC_STRIP_W = 3;
 
 function createMainWindow() {
   mainWindow = new BrowserWindow({
