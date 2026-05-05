@@ -1,4 +1,4 @@
-import { useRef, useEffect } from "react";
+import { useRef, useEffect, useState } from "react";
 import { useStore } from "../Store";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../../components/ui/select";
 
@@ -6,6 +6,7 @@ export function Settings() {
   const { state, setState } = useStore();
   const hourRef = useRef<HTMLInputElement>(null);
   const minRef = useRef<HTMLInputElement>(null);
+  const [showReportConfig, setShowReportConfig] = useState(false);
 
   useEffect(() => {
     const preventScroll = (e: WheelEvent) => e.preventDefault();
@@ -205,6 +206,53 @@ export function Settings() {
               placeholder="sk-..."
               className="h-[42px] px-3 py-2 border border-gray-200 dark:border-neutral-700 rounded-xl bg-white dark:bg-neutral-800 shadow-sm outline-none focus:ring-2 focus:ring-blue-100 dark:focus:ring-blue-900/30 focus:border-blue-400 text-foreground w-48 text-sm"
             />
+          </div>
+
+          {/* Report Agent collapsible config */}
+          <div className="border border-gray-200 dark:border-neutral-700 rounded-xl overflow-hidden">
+            <button
+              type="button"
+              onClick={() => setShowReportConfig(v => !v)}
+              className="w-full flex items-center justify-between px-4 py-3 bg-gray-50 dark:bg-neutral-800/50 hover:bg-gray-100 dark:hover:bg-neutral-800 transition-colors text-sm"
+            >
+              <span className="font-medium text-foreground">高级：Report Agent 独立配置</span>
+              <span className="text-gray-400 text-xs">{showReportConfig ? '▾ 收起' : '▸ 展开'}</span>
+            </button>
+            {showReportConfig && (
+              <div className="px-4 py-4 space-y-4 border-t border-gray-200 dark:border-neutral-700">
+                <p className="text-xs text-gray-400 dark:text-gray-500">留空则使用上方全局配置。报告生成可使用更强的深度模型。</p>
+                <div className="flex items-center justify-between">
+                  <span className="text-sm text-foreground">报告模型</span>
+                  <input
+                    type="text"
+                    value={state.settings.reportModel || ''}
+                    onChange={e => updateSetting('reportModel', e.target.value)}
+                    placeholder={state.settings.apiModel || 'gemini-2.5-flash'}
+                    className="h-[36px] px-3 py-1 border border-gray-200 dark:border-neutral-700 rounded-lg bg-white dark:bg-neutral-800 text-foreground w-48 text-sm outline-none focus:ring-1 focus:ring-blue-400"
+                  />
+                </div>
+                <div className="flex items-center justify-between">
+                  <span className="text-sm text-foreground">报告 API Key</span>
+                  <input
+                    type="password"
+                    value={state.settings.reportApiKey || ''}
+                    onChange={e => updateSetting('reportApiKey', e.target.value)}
+                    placeholder="与全局相同"
+                    className="h-[36px] px-3 py-1 border border-gray-200 dark:border-neutral-700 rounded-lg bg-white dark:bg-neutral-800 text-foreground w-48 text-sm outline-none focus:ring-1 focus:ring-blue-400"
+                  />
+                </div>
+                <div className="flex items-center justify-between">
+                  <span className="text-sm text-foreground">报告 Base URL</span>
+                  <input
+                    type="text"
+                    value={state.settings.reportApiBaseUrl || ''}
+                    onChange={e => updateSetting('reportApiBaseUrl', e.target.value)}
+                    placeholder={state.settings.apiBaseUrl || '与全局相同'}
+                    className="h-[36px] px-3 py-1 border border-gray-200 dark:border-neutral-700 rounded-lg bg-white dark:bg-neutral-800 text-foreground w-48 text-sm outline-none focus:ring-1 focus:ring-blue-400"
+                  />
+                </div>
+              </div>
+            )}
           </div>
 
           <div className="flex items-center justify-between border-t border-gray-100 dark:border-neutral-800 pt-10">

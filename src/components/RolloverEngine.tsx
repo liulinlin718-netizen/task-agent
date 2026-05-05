@@ -1,7 +1,7 @@
 import { useEffect } from "react";
 import { format, subDays } from "date-fns";
 import { useStore, AppState } from "../Store";
-import { callChatCompletion } from "../services/AgentService";
+import { callChatCompletion, getChatConfig } from "../services/AgentService";
 
 export function useRolloverEngine() {
   const { state, setState } = useStore();
@@ -13,13 +13,13 @@ export function useRolloverEngine() {
 
       if (currentLogicalDateStr > state.lastRolloverDate) {
         console.log("Rolling over... Current Logical Date:", currentLogicalDateStr, "Last Rollover:", state.lastRolloverDate);
-        
+
         const summary = await generateSummary(state);
-        
+
         setState(s => {
           const newTasks = [...s.tasks];
           const targetDayTasks = s.tasks.filter(t => t.date === s.lastRolloverDate);
-          
+
           targetDayTasks.forEach(task => {
             if (task.progress < 100) {
               newTasks.push({
@@ -65,10 +65,8 @@ function getLogicalDateString(date: Date, rolloverTime: string) {
 
 async function generateSummary(state: AppState): Promise<string> {
   const tasks = state.tasks.filter(t => t.date === state.lastRolloverDate);
-  const apiKey = state.settings.apiKey || "";
-  const baseUrl = state.settings.apiBaseUrl;
-  const apiModel = state.settings.apiModel || "gemini-2.5-flash";
-  
+  const { apiKey, baseUrl, model: apiModel } = getChatConfig(state);
+
   if (tasks.length === 0) return "今天没有记录任何任务。";
 
   const text = `

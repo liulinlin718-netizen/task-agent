@@ -181,6 +181,24 @@ function matchLocalRule(text: string): string | null {
   return null;
 }
 
+// ─── Per-Agent Config Helpers ────────────────────────────────────────────────
+
+export function getChatConfig(state: AppState) {
+  return {
+    apiKey: state.settings.apiKey || "",
+    baseUrl: state.settings.apiBaseUrl,
+    model: state.settings.apiModel || "gemini-2.5-flash",
+  };
+}
+
+export function getReportConfig(state: AppState) {
+  return {
+    apiKey: state.settings.reportApiKey || state.settings.apiKey || "",
+    baseUrl: state.settings.reportApiBaseUrl || state.settings.apiBaseUrl,
+    model: state.settings.reportModel || state.settings.apiModel || "gemini-2.5-flash",
+  };
+}
+
 // ─── Prompt Modules ──────────────────────────────────────────────────────────
 
 function mod_base_persona(state: AppState): string {
@@ -327,9 +345,7 @@ export async function processAgentRequest(
   state: AppState,
   abortSignal?: AbortSignal
 ): Promise<AgentResponse> {
-  const apiKey = state.settings.apiKey || "";
-  const baseUrl = state.settings.apiBaseUrl;
-  const apiModel = state.settings.apiModel || "gemini-2.5-flash";
+  const { apiKey, baseUrl, model: apiModel } = getChatConfig(state);
 
   const ruleHint = matchLocalRule(text);
   const systemPrompt = buildSystemPrompt(state, ruleHint);
@@ -375,9 +391,7 @@ export async function processAgentRequestStream(
   abortSignal?: AbortSignal,
   onSummaryUpdate?: (summary: string, summarizedUpTo: number) => void
 ): Promise<AgentResponse> {
-  const apiKey = state.settings.apiKey || "";
-  const baseUrl = state.settings.apiBaseUrl;
-  const apiModel = state.settings.apiModel || "gemini-2.5-flash";
+  const { apiKey, baseUrl, model: apiModel } = getChatConfig(state);
 
   // Trigger rolling summary in background (non-blocking)
   const session = state.chatSessions.find((cs) => cs.id === state.activeChatSessionId);
@@ -434,9 +448,7 @@ export async function generateCustomSummary(
   dates: string[],
   state: AppState
 ): Promise<string> {
-  const apiKey = state.settings.apiKey || "";
-  const baseUrl = state.settings.apiBaseUrl;
-  const apiModel = state.settings.apiModel || "gemini-2.5-flash";
+  const { apiKey, baseUrl, model: apiModel } = getReportConfig(state);
 
   const tasksContext = dates
     .map((date) => {

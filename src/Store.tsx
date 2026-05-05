@@ -60,6 +60,10 @@ export type AppState = {
     agentName: string;
     apiBaseUrl: string;
     apiModel?: string;
+    // Report Agent overrides (empty = fallback to global)
+    reportApiKey?: string;
+    reportApiBaseUrl?: string;
+    reportModel?: string;
   };
   chatSessions: ChatSession[];
   activeChatSessionId: string;
