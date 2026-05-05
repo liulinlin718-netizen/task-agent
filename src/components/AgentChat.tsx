@@ -471,7 +471,7 @@ export function AgentChat() {
           <input
             ref={fileInputRef}
             type="file"
-            accept=".txt,.docx"
+            accept=".txt,.docx,.pdf"
             className="hidden"
             onChange={e => { const f = e.target.files?.[0]; if (f) handleFileUpload(f); e.target.value = ''; }}
           />
@@ -480,7 +480,7 @@ export function AgentChat() {
             onClick={() => fileInputRef.current?.click()}
             disabled={isTyping}
             className="p-2.5 text-gray-400 hover:text-blue-500 dark:hover:text-blue-400 transition-colors disabled:opacity-50 shrink-0"
-            title="上传文档 (.txt, .docx)"
+            title="上传文档 (.txt, .docx, .pdf)"
           >
             <Paperclip className="w-4 h-4" />
           </button>

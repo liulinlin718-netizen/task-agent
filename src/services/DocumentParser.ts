@@ -1,4 +1,5 @@
 import mammoth from "mammoth";
+import * as pdfjsLib from "pdfjs-dist";
 import { AppState } from "../Store";
 import { callChatCompletion, getChatConfig } from "./AgentService";
 
@@ -19,7 +20,20 @@ export async function extractTextFromFile(file: File): Promise<string> {
     return result.value;
   }
 
-  throw new Error(`不支持的文件格式: .${ext}（目前支持 .txt 和 .docx）`);
+  if (ext === "pdf") {
+    pdfjsLib.GlobalWorkerOptions.workerSrc = `//cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjsLib.version}/pdf.worker.min.mjs`;
+    const arrayBuffer = await file.arrayBuffer();
+    const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+    let fullText = "";
+    for (let i = 1; i <= pdf.numPages; i++) {
+      const page = await pdf.getPage(i);
+      const content = await page.getTextContent();
+      fullText += content.items.map((item: any) => item.str).join(" ") + "\n";
+    }
+    return fullText;
+  }
+
+  throw new Error(`不支持的文件格式: .${ext}（目前支持 .txt、.docx 和 .pdf）`);
 }
 
 /**

@@ -41,6 +41,9 @@ export function useRolloverEngine() {
             ]
           };
         });
+
+        // System notification
+        try { new Notification('TaskAgent 日报', { body: summary.slice(0, 100) }); } catch { }
       }
     };
 
