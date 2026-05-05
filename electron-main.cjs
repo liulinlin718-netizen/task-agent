@@ -75,7 +75,7 @@ function createBallWindow() {
 function createTaskCenterWindow() {
   const { width: sw, height: sh } = screen.getPrimaryDisplay().workAreaSize;
   taskCenterWindow = new BrowserWindow({
-    width: TC_STRIP_W, height: 480, x: sw - TC_STRIP_W, y: Math.round((sh - 480) / 2),
+    width: 320, height: 480, x: sw - 360, y: Math.round((sh - 480) / 2),
     webPreferences: {
       preload: path.join(__dirname, 'electron-preload.cjs'),
       contextIsolation: true, nodeIntegration: false, zoomFactor: 1,
@@ -372,6 +372,8 @@ ipcMain.on('taskcenter:expand-from-edge', (event, edge, width, height) => {
   const b = taskCenterWindow.getBounds();
   const w = width || 320;
   const h = height || 480;
+  // Hide → resize → show to eliminate strip flash
+  taskCenterWindow.hide();
   taskCenterWindow.setResizable(true);
   if (edge === 'right') {
     taskCenterWindow.setBounds({ x: sw - w, y: b.y, width: w, height: h });
@@ -379,6 +381,7 @@ ipcMain.on('taskcenter:expand-from-edge', (event, edge, width, height) => {
     taskCenterWindow.setBounds({ x: 0, y: b.y, width: w, height: h });
   }
   taskCenterWindow.setResizable(false);
+  taskCenterWindow.showInactive();
 });
 
 ipcMain.on('taskcenter:check-snap', (event) => {
