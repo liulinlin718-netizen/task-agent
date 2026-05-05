@@ -211,10 +211,15 @@ function ChatPanel({ isPinned, onTogglePin }: { isPinned: boolean; onTogglePin: 
           e.preventDefault();
           window.electronAPI?.windowDragStart();
           const startX = e.clientX; const startY = e.clientY;
+          let rafId = 0;
           const onMove = (ev: MouseEvent) => {
-            window.electronAPI?.windowDragTo(ev.screenX - startX, ev.screenY - startY);
+            cancelAnimationFrame(rafId);
+            rafId = requestAnimationFrame(() => {
+              window.electronAPI?.windowDragTo(ev.screenX - startX, ev.screenY - startY);
+            });
           };
           const onUp = () => {
+            cancelAnimationFrame(rafId);
             window.electronAPI?.windowDragEnd();
             window.electronAPI?.ballCheckSnap();
             window.removeEventListener('mousemove', onMove);

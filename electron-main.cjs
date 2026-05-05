@@ -1,10 +1,14 @@
 process.env.ELECTRON_DISABLE_SECURITY_WARNINGS = 'true';
-const { app, BrowserWindow, ipcMain, screen } = require('electron');
+const { app, BrowserWindow, ipcMain, screen, Tray, Menu, nativeImage } = require('electron');
 const path = require('path');
+const fs = require('fs');
 
 let mainWindow = null;
 let ballWindow = null;
 let taskCenterWindow = null;
+let tray = null;
+
+const BALL_POS_FILE = path.join(app.getPath('userData'), 'ball-position.json');
 
 const isDev = !app.isPackaged;
 const VITE_DEV_URL = 'http://localhost:3000';
@@ -26,18 +30,28 @@ function createMainWindow() {
   } else {
     mainWindow.loadFile(path.join(__dirname, 'dist/index.html'));
   }
+  mainWindow.on('close', (e) => {
+    // Hide instead of quit — tray keeps the app alive
+    if (!app.isQuitting) {
+      e.preventDefault();
+      mainWindow.hide();
+    }
+  });
   mainWindow.on('closed', () => {
     mainWindow = null;
-    if (ballWindow && !ballWindow.isDestroyed()) ballWindow.close();
-    if (taskCenterWindow && !taskCenterWindow.isDestroyed()) taskCenterWindow.close();
-    app.quit();
   });
 }
 
 function createBallWindow() {
   const { width: sw, height: sh } = screen.getPrimaryDisplay().workAreaSize;
+  // Restore saved position or use default
+  let bx = sw - 80, by = sh - 200;
+  try {
+    const saved = JSON.parse(fs.readFileSync(BALL_POS_FILE, 'utf-8'));
+    if (typeof saved.x === 'number' && typeof saved.y === 'number') { bx = saved.x; by = saved.y; }
+  } catch { /* no saved position */ }
   ballWindow = new BrowserWindow({
-    width: 48, height: 48, x: sw - 80, y: sh - 200,
+    width: 48, height: 48, x: bx, y: by,
     webPreferences: {
       preload: path.join(__dirname, 'electron-preload.cjs'),
       contextIsolation: true, nodeIntegration: false, zoomFactor: 1,
@@ -218,6 +232,8 @@ ipcMain.on('ball:collapse', () => {
 
   ballWindow.setBounds({ x: bx, y: by, width: 48, height: 48 });
   ballWindow.setResizable(false);
+  // Persist position
+  try { fs.writeFileSync(BALL_POS_FILE, JSON.stringify({ x: bx, y: by })); } catch { }
 });
 
 ipcMain.on('ball:check-snap', (event) => {
@@ -290,5 +306,17 @@ app.whenReady().then(() => {
   createMainWindow();
   createBallWindow();
   createTaskCenterWindow();
+
+  // System tray
+  const icon = nativeImage.createEmpty();
+  tray = new Tray(icon);
+  tray.setToolTip('TaskAgent');
+  const trayMenu = Menu.buildFromTemplate([
+    { label: '显示主窗口', click: () => { if (mainWindow) { mainWindow.show(); mainWindow.focus(); } } },
+    { type: 'separator' },
+    { label: '退出', click: () => { app.isQuitting = true; app.quit(); } },
+  ]);
+  tray.setContextMenu(trayMenu);
+  tray.on('double-click', () => { if (mainWindow) { mainWindow.show(); mainWindow.focus(); } });
 });
-app.on('window-all-closed', () => app.quit());
+app.on('window-all-closed', () => { /* keep running, tray is alive */ });
