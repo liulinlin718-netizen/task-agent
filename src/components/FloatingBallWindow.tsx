@@ -9,7 +9,6 @@ function FloatingBallContent() {
   const [expanded, setExpanded] = useState(false);
   const [isPinned, setIsPinned] = useState(false);
   const [isDragging, setIsDragging] = useState(false);
-  const [nearEdge, setNearEdge] = useState(false);
   const dragStartOffset = useRef({ x: 0, y: 0 });
   const dragStartScreen = useRef({ x: 0, y: 0 });
   const hasMoved = useRef(false);
@@ -37,18 +36,11 @@ function FloatingBallContent() {
           const targetX = e.screenX - dragStartOffset.current.x;
           const targetY = e.screenY - dragStartOffset.current.y;
           window.electronAPI?.windowDragTo(targetX, targetY);
-          // Near-edge snap feedback
-          const workArea = window.electronAPI?.screenGetWorkArea();
-          if (workArea) {
-            const near = targetX < 100 || targetX + 48 > workArea.width - 100;
-            setNearEdge(near);
-          }
         });
       }
     };
     const onUp = () => {
       setIsDragging(false);
-      setNearEdge(false);
       window.electronAPI?.windowDragEnd();
       window.electronAPI?.ballCheckSnap();
     };
@@ -121,10 +113,7 @@ function FloatingBallContent() {
             className="cursor-pointer flex items-center justify-center select-none absolute w-12 h-12 rounded-full inset-0 m-auto"
             style={{
               background: 'linear-gradient(135deg, #2563eb 0%, #3b82f6 50%, #60a5fa 100%)',
-              boxShadow: nearEdge
-                ? '0 0 0 3px rgba(96,165,250,0.6) inset'
-                : '0 0 0 2px rgba(255,255,255,0.15) inset',
-              transition: 'box-shadow 0.15s ease',
+              boxShadow: '0 4px 20px rgba(37,99,235,0.45), 0 0 0 2px rgba(255,255,255,0.15) inset',
             }}
           >
             <Sparkles className="w-5 h-5 text-white drop-shadow-lg pointer-events-none" />

@@ -152,8 +152,8 @@ function TaskCenterContent() {
       }}
     >
       {/* Header */}
-      <div 
-        onMouseDown={handleMouseDown} 
+      <div
+        onMouseDown={handleMouseDown}
         className="flex items-center justify-between px-4 py-2.5 border-b border-white/5 shrink-0 cursor-move"
       >
         <div className="flex items-center gap-2">
@@ -244,10 +244,9 @@ function TaskCard({ task, index, updateTask }: { task: any; index: number; updat
       <div className="flex-1 min-w-0">
         <div className={`text-xs font-medium truncate ${task.progress >= 100 ? 'text-white/30 line-through' : 'text-white/80'}`}>{task.name}</div>
         {task.priority && (
-          <span className={`text-[9px] mt-0.5 inline-block px-1.5 py-0.5 rounded-full font-medium ${
-            task.priority === 'high' ? 'bg-red-500/15 text-red-400' :
-            task.priority === 'medium' ? 'bg-amber-500/15 text-amber-400' : 'bg-blue-500/15 text-blue-400'
-          }`}>{task.priority === 'high' ? '高' : task.priority === 'medium' ? '中' : '低'}</span>
+          <span className={`text-[9px] mt-0.5 inline-block px-1.5 py-0.5 rounded-full font-medium ${task.priority === 'high' ? 'bg-red-500/15 text-red-400' :
+              task.priority === 'medium' ? 'bg-amber-500/15 text-amber-400' : 'bg-blue-500/15 text-blue-400'
+            }`}>{task.priority === 'high' ? '高' : task.priority === 'medium' ? '中' : '低'}</span>
         )}
       </div>
     </motion.div>

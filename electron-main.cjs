@@ -75,7 +75,7 @@ function createBallWindow() {
 function createTaskCenterWindow() {
   const { width: sw, height: sh } = screen.getPrimaryDisplay().workAreaSize;
   taskCenterWindow = new BrowserWindow({
-    width: 320, height: 480, x: sw - 8, y: Math.round((sh - 480) / 2),
+    width: TC_STRIP_W, height: 480, x: sw - TC_STRIP_W, y: Math.round((sh - 480) / 2),
     webPreferences: {
       preload: path.join(__dirname, 'electron-preload.cjs'),
       contextIsolation: true, nodeIntegration: false, zoomFactor: 1,
@@ -191,9 +191,10 @@ ipcMain.on('app:update-taskcenter', (event, enabled) => {
   const { width: sw, height: sh } = screen.getPrimaryDisplay().workAreaSize;
   if (!taskCenterWindow || taskCenterWindow.isDestroyed()) return;
   if (enabled && !prevTcVisible) {
-    // Position mostly off-screen (only 8px visible as invisible trigger)
-    const { width: sw2 } = screen.getPrimaryDisplay().workAreaSize;
-    taskCenterWindow.setBounds({ x: sw2 - 8, y: taskCenterWindow.getBounds().y, width: 320, height: 480 });
+    // Show at strip size first to avoid flash of full panel
+    taskCenterWindow.setResizable(true);
+    taskCenterWindow.setBounds({ x: sw - TC_STRIP_W, y: Math.round((sh - 480) / 2), width: TC_STRIP_W, height: 480 });
+    taskCenterWindow.setResizable(false);
     taskCenterWindow.webContents.send('taskcenter:auto-snap', 'right');
     taskCenterWindow.showInactive();
   } else if (enabled) {
@@ -355,24 +356,29 @@ ipcMain.on('taskcenter:snap-to-edge', (event, edge, height) => {
   if (!taskCenterWindow || taskCenterWindow.isDestroyed()) return;
   const { width: sw } = screen.getPrimaryDisplay().workAreaSize;
   const b = taskCenterWindow.getBounds();
-  // Position window mostly off-screen (only 8px visible)
+  const h = height || b.height;
+  taskCenterWindow.setResizable(true);
   if (edge === 'right') {
-    taskCenterWindow.setPosition(sw - 8, b.y);
+    taskCenterWindow.setBounds({ x: sw - TC_STRIP_W, y: b.y, width: TC_STRIP_W, height: h });
   } else {
-    taskCenterWindow.setPosition(-b.width + 8, b.y);
+    taskCenterWindow.setBounds({ x: 0, y: b.y, width: TC_STRIP_W, height: h });
   }
+  taskCenterWindow.setResizable(false);
 });
 
 ipcMain.on('taskcenter:expand-from-edge', (event, edge, width, height) => {
   if (!taskCenterWindow || taskCenterWindow.isDestroyed()) return;
   const { width: sw } = screen.getPrimaryDisplay().workAreaSize;
   const b = taskCenterWindow.getBounds();
-  // Slide window fully on-screen
+  const w = width || 320;
+  const h = height || 480;
+  taskCenterWindow.setResizable(true);
   if (edge === 'right') {
-    taskCenterWindow.setPosition(sw - b.width, b.y);
+    taskCenterWindow.setBounds({ x: sw - w, y: b.y, width: w, height: h });
   } else {
-    taskCenterWindow.setPosition(0, b.y);
+    taskCenterWindow.setBounds({ x: 0, y: b.y, width: w, height: h });
   }
+  taskCenterWindow.setResizable(false);
 });
 
 ipcMain.on('taskcenter:check-snap', (event) => {
