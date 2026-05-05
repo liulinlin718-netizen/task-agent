@@ -357,11 +357,12 @@ ipcMain.on('taskcenter:snap-to-edge', (event, edge, height) => {
   const b = taskCenterWindow.getBounds();
   const h = height || b.height;
   taskCenterWindow.setResizable(true);
-  const target = edge === 'right'
-    ? { x: sw - TC_STRIP_W, y: b.y, width: TC_STRIP_W, height: h }
-    : { x: 0, y: b.y, width: TC_STRIP_W, height: h };
-  animateBounds(taskCenterWindow, target, 150);
-  setTimeout(() => { if (taskCenterWindow && !taskCenterWindow.isDestroyed()) taskCenterWindow.setResizable(false); }, 160);
+  if (edge === 'right') {
+    taskCenterWindow.setBounds({ x: sw - TC_STRIP_W, y: b.y, width: TC_STRIP_W, height: h });
+  } else {
+    taskCenterWindow.setBounds({ x: 0, y: b.y, width: TC_STRIP_W, height: h });
+  }
+  taskCenterWindow.setResizable(false);
 });
 
 ipcMain.on('taskcenter:expand-from-edge', (event, edge, width, height) => {
@@ -371,11 +372,12 @@ ipcMain.on('taskcenter:expand-from-edge', (event, edge, width, height) => {
   const w = width || 320;
   const h = height || 480;
   taskCenterWindow.setResizable(true);
-  const target = edge === 'right'
-    ? { x: sw - w, y: b.y, width: w, height: h }
-    : { x: 0, y: b.y, width: w, height: h };
-  animateBounds(taskCenterWindow, target, 150);
-  setTimeout(() => { if (taskCenterWindow && !taskCenterWindow.isDestroyed()) taskCenterWindow.setResizable(false); }, 160);
+  if (edge === 'right') {
+    taskCenterWindow.setBounds({ x: sw - w, y: b.y, width: w, height: h });
+  } else {
+    taskCenterWindow.setBounds({ x: 0, y: b.y, width: w, height: h });
+  }
+  taskCenterWindow.setResizable(false);
 });
 
 ipcMain.on('taskcenter:check-snap', (event) => {
