@@ -318,9 +318,10 @@ app.whenReady().then(() => {
       const dist = Math.sqrt((x - cx) ** 2 + (y - cy) ** 2);
       if (dist <= r + 0.8) {
         const t = Math.min(dist / r, 1);
-        buf[i]   = Math.round(246 + (180 - 246) * t); // B (BGRA)
-        buf[i+1] = Math.round(130 + (170 - 130) * t); // G
-        buf[i+2] = Math.round(59  + (90  - 59)  * t); // R
+        // Match floating ball: #2563eb → #3b82f6 → #60a5fa (BGRA order)
+        buf[i]   = Math.round(235 + (250 - 235) * t); // B: 0xeb→0xfa
+        buf[i+1] = Math.round(99  + (165 - 99)  * t); // G: 0x63→0xa5
+        buf[i+2] = Math.round(37  + (96  - 37)  * t); // R: 0x25→0x60
         buf[i+3] = dist <= r ? 255 : Math.round(255 * Math.max(0, 1 - (dist - r) / 0.8));
       }
     }
