@@ -145,38 +145,38 @@ export function Settings() {
 
           <div className="flex items-center justify-between border-t border-gray-100 dark:border-neutral-800 pt-10">
             <div>
-              <h3 className="text-lg font-medium text-foreground">API 接口类型</h3>
-              <p className="text-sm text-gray-500 dark:text-gray-400">选择服务商协议格式。</p>
-            </div>
-            <Select value={state.settings.apiFormat || 'gemini'} onValueChange={val => updateSetting('apiFormat', val)}>
-              <SelectTrigger className="w-64 bg-white dark:bg-neutral-800 border-gray-200 dark:border-neutral-700 rounded-xl focus:ring-2 focus:ring-blue-100 dark:focus:ring-blue-900/30 h-[42px] px-3 py-2 text-sm">
-                <SelectValue placeholder="选择接口类型" />
-              </SelectTrigger>
-              <SelectContent alignItemWithTrigger={false} sideOffset={8} className="rounded-xl shadow-lg w-64">
-                <SelectItem value="gemini">Google Gemini</SelectItem>
-                <SelectItem value="openai">OpenAI 兼容 (通用)</SelectItem>
-                <SelectItem value="deepseek">DeepSeek (OpenAI 兼容)</SelectItem>
-                <SelectItem value="qwen">千问 Qwen (OpenAI 兼容)</SelectItem>
-                <SelectItem value="mimo">Kimi / Moonshot (OpenAI 兼容)</SelectItem>
-                <SelectItem value="glm">智谱 GLM (OpenAI 兼容)</SelectItem>
-                <SelectItem value="minimax">MiniMax (OpenAI 兼容)</SelectItem>
-                <SelectItem value="doubao">豆包 Doubao (OpenAI 兼容)</SelectItem>
-              </SelectContent>
-            </Select>
-          </div>
-
-          <div className="flex items-center justify-between">
-            <div>
               <h3 className="text-lg font-medium text-foreground">API Base URL</h3>
-              <p className="text-sm text-gray-500 dark:text-gray-400">例如: http://localhost:11434/v1</p>
+              <p className="text-sm text-gray-500 dark:text-gray-400">所有供应商统一使用 OpenAI 兼容格式</p>
             </div>
             <input 
               type="text" 
-              value={state.settings.apiUrl || ''}
-              onChange={e => updateSetting('apiUrl', e.target.value)}
-              placeholder="https://..."
-              className="h-[42px] px-3 py-2 border border-gray-200 dark:border-neutral-700 rounded-xl bg-white dark:bg-neutral-800 shadow-sm outline-none focus:ring-2 focus:ring-blue-100 dark:focus:ring-blue-900/30 focus:border-blue-400 text-foreground w-64 text-sm"
+              value={state.settings.apiBaseUrl || ''}
+              onChange={e => updateSetting('apiBaseUrl', e.target.value)}
+              placeholder="https://generativelanguage.googleapis.com/v1beta/openai"
+              className="h-[42px] px-3 py-2 border border-gray-200 dark:border-neutral-700 rounded-xl bg-white dark:bg-neutral-800 shadow-sm outline-none focus:ring-2 focus:ring-blue-100 dark:focus:ring-blue-900/30 focus:border-blue-400 text-foreground w-80 text-sm"
             />
+          </div>
+          <div className="flex flex-wrap gap-2 -mt-2">
+            {[
+              { label: 'Gemini', url: 'https://generativelanguage.googleapis.com/v1beta/openai' },
+              { label: 'OpenAI', url: 'https://api.openai.com/v1' },
+              { label: 'DeepSeek', url: 'https://api.deepseek.com/v1' },
+              { label: 'Kimi', url: 'https://api.moonshot.cn/v1' },
+              { label: 'Qwen', url: 'https://dashscope.aliyuncs.com/compatible-mode/v1' },
+            ].map(p => (
+              <button
+                key={p.label}
+                type="button"
+                onClick={() => updateSetting('apiBaseUrl', p.url)}
+                className={`px-3 py-1 text-xs rounded-lg border transition-colors ${
+                  state.settings.apiBaseUrl === p.url
+                    ? 'bg-blue-50 dark:bg-blue-900/30 border-blue-300 dark:border-blue-700 text-blue-700 dark:text-blue-300'
+                    : 'bg-white dark:bg-neutral-800 border-gray-200 dark:border-neutral-700 text-gray-600 dark:text-gray-400 hover:border-blue-300 dark:hover:border-blue-700'
+                }`}
+              >
+                {p.label}
+              </button>
+            ))}
           </div>
 
           <div className="flex items-center justify-between">

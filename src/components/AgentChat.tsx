@@ -1,12 +1,12 @@
 import { useState, useRef, useEffect } from "react";
 import { useStore } from "../Store";
-import { processAgentRequest } from "../services/AgentService";
+import { processAgentRequest, processAgentRequestStream, generateCustomSummary } from "../services/AgentService";
 import { Send, Plus, History, X, MessageSquare, Trash2, RefreshCw, ArrowLeft } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 import Markdown from "react-markdown";
 
 export function AgentChat() {
-  const { state, addTask, updateTask, addChatMessage, updateChatMessage, deleteChatMessage, acceptProposedTask, acceptAllProposedTasks, dismissProposedTasks, updateMessageProposedTasks, setActiveDate, setState, createNewChat, setActiveChatSession, deleteChatSession, updateChatSessionTitle } = useStore();
+  const { state, addTask, updateTask, deleteTask, addChatMessage, updateChatMessage, appendChatMessageText, deleteChatMessage, acceptProposedTask, acceptAllProposedTasks, dismissProposedTasks, updateMessageProposedTasks, setActiveDate, setState, createNewChat, setActiveChatSession, deleteChatSession, updateChatSessionTitle } = useStore();
   const [input, setInput] = useState("");
   const [isTyping, setIsTyping] = useState(false);
   const [showHistory, setShowHistory] = useState(false);
@@ -74,10 +74,19 @@ export function AgentChat() {
         if (res.data.targetDate && res.data.targetDate !== state.activeDate) {
           setActiveDate(res.data.targetDate);
         }
-      } else if (res.intent === "update_progress" && res.data.taskId && res.data.progress !== undefined) {
-        updateTask(res.data.taskId, { progress: res.data.progress });
+      } else if (res.intent === "update_task" && res.data.taskId) {
+        const updates: any = {};
+        if (res.data.progress !== undefined) updates.progress = res.data.progress;
+        if (res.data.date) updates.date = res.data.date;
+        if (res.data.notes) updates.notes = res.data.notes;
+        if (res.data.priority) updates.priority = res.data.priority;
+        updateTask(res.data.taskId, updates);
         const taskName = state.tasks.find(t => t.id === res.data.taskId)?.name || "任务";
-        replyText = replyText || `已将 **${taskName}** 的进度更新为 ${res.data.progress}%。`;
+        replyText = replyText || `已更新 **${taskName}**。`;
+      } else if (res.intent === "delete_task" && res.data.taskId) {
+        const taskName = state.tasks.find(t => t.id === res.data.taskId)?.name || "任务";
+        deleteTask(res.data.taskId);
+        replyText = replyText || `已删除任务：**${taskName}**。`;
       } else if (res.intent === "decompose" && res.data.proposedTasks && res.data.proposedTasks.length > 0) {
         const taskName = state.tasks.find(t => t.id === res.data.taskId)?.name || "该任务";
         replyText = replyText || `这是 **${taskName}** 的拆解步骤，请确认需要添加哪些进度：`;
@@ -134,13 +143,22 @@ export function AgentChat() {
     abortControllerRef.current = abortController;
 
     try {
-      const res = await processAgentRequest(userText, state, abortController.signal);
-      
-      let replyText = res.data.reply || "";
+      // Create a placeholder message for streaming
+      addChatMessage("model", "");
 
-      if (res.intent === "add_tasks" && res.data.proposedTasks && res.data.proposedTasks.length > 0) {
-        replyText = replyText || "好的，为你生成了以下规划，请确认是否并入任务表：";
-        // Auto-add the first task (closest to user's original request)
+      const res = await processAgentRequestStream(
+        userText, state,
+        (chunk) => {
+          // Typewriter effect: append text to the last model message
+          appendChatMessageText(chunk);
+        },
+        abortController.signal
+      );
+
+      if (res.intent === "chat") {
+        // Text was already streamed — nothing more to do
+      } else if (res.intent === "add_tasks" && res.data.proposedTasks && res.data.proposedTasks.length > 0) {
+        let replyText = res.data.reply || "好的，为你生成了以下规划，请确认是否并入任务表：";
         const firstTaskName = res.data.proposedTasks[0];
         const targetDate = res.data.targetDate || state.activeDate;
         addTask(firstTaskName, targetDate);
@@ -148,17 +166,37 @@ export function AgentChat() {
         if (res.data.targetDate && res.data.targetDate !== state.activeDate) {
           setActiveDate(res.data.targetDate);
         }
-      } else if (res.intent === "update_progress" && res.data.taskId && res.data.progress !== undefined) {
-        updateTask(res.data.taskId, { progress: res.data.progress });
+      } else if (res.intent === "update_task" && res.data.taskId) {
+        const updates: any = {};
+        if (res.data.progress !== undefined) updates.progress = res.data.progress;
+        if (res.data.date) updates.date = res.data.date;
+        if (res.data.notes) updates.notes = res.data.notes;
+        if (res.data.priority) updates.priority = res.data.priority;
+        updateTask(res.data.taskId, updates);
         const taskName = state.tasks.find(t => t.id === res.data.taskId)?.name || "任务";
-        replyText = replyText || `已将 **${taskName}** 的进度更新为 ${res.data.progress}%。`;
-        addChatMessage("model", replyText);
+        addChatMessage("model", res.data.reply || `已更新 **${taskName}**。`);
+      } else if (res.intent === "delete_task" && res.data.taskId) {
+        const taskName = state.tasks.find(t => t.id === res.data.taskId)?.name || "任务";
+        deleteTask(res.data.taskId);
+        addChatMessage("model", res.data.reply || `已删除任务：**${taskName}**。`);
+      } else if (res.intent === "generate_report" && res.data.startDate && res.data.endDate) {
+        addChatMessage("model", "正在生成报告，请稍候...");
+        try {
+          const dates: string[] = [];
+          let d = new Date(res.data.startDate);
+          const end = new Date(res.data.endDate);
+          while (d <= end) {
+            dates.push(d.toISOString().split('T')[0]);
+            d.setDate(d.getDate() + 1);
+          }
+          const report = await generateCustomSummary(dates, state);
+          addChatMessage("model", report);
+        } catch {
+          addChatMessage("model", "报告生成失败，请检查 API 配置。");
+        }
       } else if (res.intent === "decompose" && res.data.proposedTasks && res.data.proposedTasks.length > 0) {
         const taskName = state.tasks.find(t => t.id === res.data.taskId)?.name || "该任务";
-        replyText = replyText || `这是 **${taskName}** 的拆解步骤，请确认需要添加哪些进度：`;
-        addChatMessage("model", replyText, res.data.proposedTasks);
-      } else {
-        addChatMessage("model", replyText);
+        addChatMessage("model", res.data.reply || `这是 **${taskName}** 的拆解步骤：`, res.data.proposedTasks);
       }
 
       if (res.data.chatTitle && res.data.chatTitle.length > 0) {

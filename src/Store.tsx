@@ -56,8 +56,7 @@ export type AppState = {
     theme: 'light' | 'dark';
     apiKey?: string;
     agentName: string;
-    apiFormat?: string;
-    apiUrl?: string;
+    apiBaseUrl: string;
     apiModel?: string;
   };
   chatSessions: ChatSession[];
@@ -76,6 +75,7 @@ export type StoreContextType = {
   deleteTask: (id: string) => void;
   addChatMessage: (role: 'user' | 'model', text: string, proposedTasks?: string[], targetDate?: string) => void;
   updateChatMessage: (messageId: string, updates: Partial<ChatMessage>) => void;
+  appendChatMessageText: (chunk: string) => void;
   deleteChatMessage: (messageId: string) => void;
   acceptProposedTask: (messageId: string, taskIndex: number, date: string) => void;
   acceptAllProposedTasks: (messageId: string, date: string) => void;
@@ -98,7 +98,7 @@ const defaultState: AppState = {
     { id: '1', name: '阅读文献：多模态大模型综述', progress: 30, date: format(new Date(), 'yyyy-MM-dd') },
     { id: '2', name: '撰写引言部分', progress: 0, date: format(new Date(), 'yyyy-MM-dd') }
   ],
-  settings: { rolloverTime: '02:00', agentStyle: 'academic', sidebarEnabled: true, floatingBallEnabled: false, theme: 'light', agentName: '任务助理', apiFormat: 'gemini', apiModel: 'gemini-2.5-flash', apiUrl: '' },
+  settings: { rolloverTime: '02:00', agentStyle: 'academic', sidebarEnabled: true, floatingBallEnabled: false, theme: 'light', agentName: '任务助理', apiBaseUrl: 'https://generativelanguage.googleapis.com/v1beta/openai', apiModel: 'gemini-2.5-flash' },
   chatSessions: [{
     id: defaultSessionId,
     title: '新对话',
@@ -127,7 +127,21 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
       if (!p.historySummaries) p.historySummaries = [];
       if (!p.settings.theme) p.settings.theme = 'light';
       if (!p.settings.agentName) p.settings.agentName = '任务助理';
-      if (!p.settings.apiFormat) p.settings.apiFormat = 'gemini';
+      // v1 → v2 migration: apiFormat + apiUrl → apiBaseUrl
+      if (p.settings.apiFormat && !p.settings.apiBaseUrl) {
+        const oldUrl = p.settings.apiUrl || '';
+        if (p.settings.apiFormat === 'gemini') {
+          p.settings.apiBaseUrl = oldUrl
+            ? (oldUrl.replace(/\/$/, '') + '/openai')
+            : 'https://generativelanguage.googleapis.com/v1beta/openai';
+        } else {
+          // openai / deepseek / qwen / mimo / glm / minimax / doubao
+          p.settings.apiBaseUrl = oldUrl || 'https://generativelanguage.googleapis.com/v1beta/openai';
+        }
+        delete p.settings.apiFormat;
+        delete p.settings.apiUrl;
+      }
+      if (!p.settings.apiBaseUrl) p.settings.apiBaseUrl = 'https://generativelanguage.googleapis.com/v1beta/openai';
 
       // migrate chatHistory to chatSessions
       if (!p.chatSessions && p.chatHistory) {
@@ -240,6 +254,22 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
       if (msgIndex === -1) return s;
 
       newMessages[msgIndex] = { ...newMessages[msgIndex], ...updates };
+      const newSessions = [...s.chatSessions];
+      newSessions[sessionIndex] = { ...session, messages: newMessages, updatedAt: new Date().toISOString() };
+      return { ...s, chatSessions: newSessions };
+    });
+  };
+
+  const appendChatMessageText = (chunk: string) => {
+    setState(s => {
+      const sessionIndex = s.chatSessions.findIndex(cs => cs.id === s.activeChatSessionId);
+      if (sessionIndex === -1) return s;
+      const session = s.chatSessions[sessionIndex];
+      const newMessages = [...session.messages];
+      // Append to the last message (the streaming placeholder)
+      const lastIdx = newMessages.length - 1;
+      if (lastIdx < 0) return s;
+      newMessages[lastIdx] = { ...newMessages[lastIdx], text: newMessages[lastIdx].text + chunk };
       const newSessions = [...s.chatSessions];
       newSessions[sessionIndex] = { ...session, messages: newMessages, updatedAt: new Date().toISOString() };
       return { ...s, chatSessions: newSessions };
@@ -439,7 +469,7 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
   return (
     <StoreContext.Provider value={{
       state, setState, addTask, updateTask, deleteTask,
-      addChatMessage, updateChatMessage, deleteChatMessage, acceptProposedTask, acceptAllProposedTasks, dismissProposedTasks, updateMessageProposedTasks, setActiveDate,
+      addChatMessage, updateChatMessage, appendChatMessageText, deleteChatMessage, acceptProposedTask, acceptAllProposedTasks, dismissProposedTasks, updateMessageProposedTasks, setActiveDate,
       createNewChat, setActiveChatSession, deleteChatSession,
       updateChatSessionTitle, addReport, deleteReport
     }}>

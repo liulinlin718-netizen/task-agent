@@ -148,7 +148,7 @@ function FloatingBallContent() {
 }
 
 function ChatPanel({ isPinned, onTogglePin }: { isPinned: boolean; onTogglePin: () => void }) {
-  const { state, addTask, addChatMessage, updateTask, setActiveDate, updateChatSessionTitle } = useStore();
+  const { state, addTask, addChatMessage, updateTask, deleteTask, setActiveDate, updateChatSessionTitle } = useStore();
   const [input, setInput] = useState('');
   const [isTyping, setIsTyping] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -169,15 +169,24 @@ function ChatPanel({ isPinned, onTogglePin }: { isPinned: boolean; onTogglePin: 
       let reply = res.data.reply || '';
       if (res.intent === 'add_tasks' && res.data.proposedTasks?.length) {
         reply = reply || '好的，为你生成了以下规划：';
-        // Auto-add the first task (closest to user's original request)
         const firstTaskName = res.data.proposedTasks[0];
         const targetDate = res.data.targetDate || state.activeDate;
         addTask(firstTaskName, targetDate);
         addChatMessage('model', reply, res.data.proposedTasks, res.data.targetDate);
-      } else if (res.intent === 'update_progress' && res.data.taskId && res.data.progress !== undefined) {
-        updateTask(res.data.taskId, { progress: res.data.progress });
+      } else if (res.intent === 'update_task' && res.data.taskId) {
+        const updates: any = {};
+        if (res.data.progress !== undefined) updates.progress = res.data.progress;
+        if (res.data.date) updates.date = res.data.date;
+        if (res.data.notes) updates.notes = res.data.notes;
+        if (res.data.priority) updates.priority = res.data.priority;
+        updateTask(res.data.taskId, updates);
         const name = state.tasks.find(t => t.id === res.data.taskId)?.name || '任务';
-        reply = reply || `已将 **${name}** 的进度更新为 ${res.data.progress}%。`;
+        reply = reply || `已更新 **${name}**。`;
+        addChatMessage('model', reply);
+      } else if (res.intent === 'delete_task' && res.data.taskId) {
+        const name = state.tasks.find(t => t.id === res.data.taskId)?.name || '任务';
+        deleteTask(res.data.taskId);
+        reply = reply || `已删除任务：**${name}**。`;
         addChatMessage('model', reply);
       } else { addChatMessage('model', reply); }
       if (res.data.chatTitle?.length) updateChatSessionTitle(state.activeChatSessionId, res.data.chatTitle);
