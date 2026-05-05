@@ -260,5 +260,3 @@ export default function FloatingTaskCenterWindow() {
     </StoreProvider>
   );
 }
-  );
-}
