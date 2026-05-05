@@ -11,6 +11,7 @@ function TaskCenterContent() {
   const [isHovering, setIsHovering] = useState(false);
   const [isResizing, setIsResizing] = useState(false);
   const [isDragging, setIsDragging] = useState(false);
+  const [isTransitioning, setIsTransitioning] = useState(false);
   const dragStartOffset = useRef({ x: 0, y: 0 });
   const resizeStart = useRef({ x: 0, y: 0, w: 320, h: 480 });
   const [panelSize, setPanelSize] = useState({ w: 320, h: 480 });
@@ -102,9 +103,12 @@ function TaskCenterContent() {
   // --- Edge hover ---
   const handleEdgeHover = () => {
     if (snappedEdge) {
-      // Expand window first, then switch content after a frame
+      // 1. Render transparent content during expansion
+      setIsTransitioning(true);
+      // 2. Expand window
       window.electronAPI?.taskCenterExpandFromEdge(snappedEdge, panelSize.w, panelSize.h);
-      requestAnimationFrame(() => setIsHovering(true));
+      // 3. After setBounds takes effect, show panel
+      setTimeout(() => { setIsTransitioning(false); setIsHovering(true); }, 60);
     }
   };
 
@@ -124,6 +128,11 @@ function TaskCenterContent() {
     addTask(newTaskInput.trim(), today);
     setNewTaskInput('');
   };
+
+  // --- Transparent during transition ---
+  if (isTransitioning) {
+    return <div className="w-full h-full" style={{ background: 'transparent' }} />;
+  }
 
   // --- Snapped edge indicator ---
   if (snappedEdge && !isHovering) {
