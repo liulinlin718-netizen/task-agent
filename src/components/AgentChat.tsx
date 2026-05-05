@@ -1,7 +1,8 @@
 import { useState, useRef, useEffect } from "react";
 import { useStore } from "../Store";
 import { processAgentRequest, processAgentRequestStream, generateCustomSummary } from "../services/AgentService";
-import { Send, Plus, History, X, MessageSquare, Trash2, RefreshCw, ArrowLeft } from "lucide-react";
+import { extractTextFromFile, extractTasksFromText } from "../services/DocumentParser";
+import { Send, Plus, History, X, MessageSquare, Trash2, RefreshCw, ArrowLeft, Paperclip } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 import Markdown from "react-markdown";
 
@@ -14,6 +15,27 @@ export function AgentChat() {
   const scrollRef = useRef<HTMLDivElement>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const abortControllerRef = useRef<AbortController | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const handleFileUpload = async (file: File) => {
+    if (isTyping) return;
+    setIsTyping(true);
+    addChatMessage("user", `📎 ${file.name}`);
+    addChatMessage("model", "正在解析文档...");
+    try {
+      const text = await extractTextFromFile(file);
+      const tasks = await extractTasksFromText(text, state);
+      if (tasks.length > 0) {
+        addChatMessage("model", `从 **${file.name}** 中提取了 ${tasks.length} 个待办事项：`, tasks);
+      } else {
+        addChatMessage("model", "未能从文档中提取到待办事项。");
+      }
+    } catch (e: any) {
+      addChatMessage("model", e.message || "文档解析失败。");
+    } finally {
+      setIsTyping(false);
+    }
+  };
 
   const currentSession = state.chatSessions.find(cs => cs.id === state.activeChatSessionId) || state.chatSessions[0];
 
@@ -436,13 +458,37 @@ export function AgentChat() {
         </div>
       </div>
 
-      <div className="p-6 bg-white/40 dark:bg-neutral-900/40 border-t border-gray-100 dark:border-neutral-800">
-        <form onSubmit={handleSubmit} className="relative">
+      <div
+        className="p-6 bg-white/40 dark:bg-neutral-900/40 border-t border-gray-100 dark:border-neutral-800"
+        onDragOver={e => { e.preventDefault(); e.stopPropagation(); }}
+        onDrop={e => {
+          e.preventDefault(); e.stopPropagation();
+          const file = e.dataTransfer.files?.[0];
+          if (file) handleFileUpload(file);
+        }}
+      >
+        <form onSubmit={handleSubmit} className="relative flex items-center gap-2">
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept=".txt,.docx"
+            className="hidden"
+            onChange={e => { const f = e.target.files?.[0]; if (f) handleFileUpload(f); e.target.value = ''; }}
+          />
+          <button
+            type="button"
+            onClick={() => fileInputRef.current?.click()}
+            disabled={isTyping}
+            className="p-2.5 text-gray-400 hover:text-blue-500 dark:hover:text-blue-400 transition-colors disabled:opacity-50 shrink-0"
+            title="上传文档 (.txt, .docx)"
+          >
+            <Paperclip className="w-4 h-4" />
+          </button>
           <input
             value={input}
             onChange={e => setInput(e.target.value)}
             placeholder="输入指令..."
-            className="w-full bg-white dark:bg-neutral-800 border border-gray-200 dark:border-neutral-700 rounded-2xl px-4 py-3 pr-10 text-sm focus:ring-2 focus:ring-blue-100 dark:focus:ring-blue-900/30 focus:border-blue-400 transition-all outline-none text-foreground placeholder:text-gray-400"
+            className="flex-1 bg-white dark:bg-neutral-800 border border-gray-200 dark:border-neutral-700 rounded-2xl px-4 py-3 pr-10 text-sm focus:ring-2 focus:ring-blue-100 dark:focus:ring-blue-900/30 focus:border-blue-400 transition-all outline-none text-foreground placeholder:text-gray-400"
           />
           <button type="submit" disabled={!input.trim() || isTyping} className="absolute right-3 bottom-0 top-0 m-auto text-blue-600 dark:text-blue-400 hover:text-blue-700 dark:hover:text-blue-300 disabled:opacity-50">
             <Send className="w-5 h-5" />
