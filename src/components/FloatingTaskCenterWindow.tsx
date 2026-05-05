@@ -245,7 +245,7 @@ function TaskCard({ task, index, updateTask }: { task: any; index: number; updat
         <div className={`text-xs font-medium truncate ${task.progress >= 100 ? 'text-white/30 line-through' : 'text-white/80'}`}>{task.name}</div>
         {task.priority && (
           <span className={`text-[9px] mt-0.5 inline-block px-1.5 py-0.5 rounded-full font-medium ${task.priority === 'high' ? 'bg-red-500/15 text-red-400' :
-              task.priority === 'medium' ? 'bg-amber-500/15 text-amber-400' : 'bg-blue-500/15 text-blue-400'
+            task.priority === 'medium' ? 'bg-amber-500/15 text-amber-400' : 'bg-blue-500/15 text-blue-400'
             }`}>{task.priority === 'high' ? '高' : task.priority === 'medium' ? '中' : '低'}</span>
         )}
       </div>
