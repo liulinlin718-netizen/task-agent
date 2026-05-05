@@ -37,6 +37,8 @@ export type ChatSession = {
   title: string;
   messages: ChatMessage[];
   updatedAt: string;
+  summary?: string;        // 滑动摘要缓存
+  summarizedUpTo?: number; // 已摘要到第几条消息的 index
 };
 
 export type AppState = {

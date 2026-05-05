@@ -152,7 +152,17 @@ export function AgentChat() {
           // Typewriter effect: append text to the last model message
           appendChatMessageText(chunk);
         },
-        abortController.signal
+        abortController.signal,
+        // Rolling summary callback — update session in background
+        (summary, summarizedUpTo) => {
+          setState(s => {
+            const idx = s.chatSessions.findIndex(cs => cs.id === s.activeChatSessionId);
+            if (idx === -1) return s;
+            const sessions = [...s.chatSessions];
+            sessions[idx] = { ...sessions[idx], summary, summarizedUpTo };
+            return { ...s, chatSessions: sessions };
+          });
+        }
       );
 
       if (res.intent === "chat") {
@@ -167,18 +177,29 @@ export function AgentChat() {
           setActiveDate(res.data.targetDate);
         }
       } else if (res.intent === "update_task" && res.data.taskId) {
-        const updates: any = {};
-        if (res.data.progress !== undefined) updates.progress = res.data.progress;
-        if (res.data.date) updates.date = res.data.date;
-        if (res.data.notes) updates.notes = res.data.notes;
-        if (res.data.priority) updates.priority = res.data.priority;
-        updateTask(res.data.taskId, updates);
-        const taskName = state.tasks.find(t => t.id === res.data.taskId)?.name || "任务";
-        addChatMessage("model", res.data.reply || `已更新 **${taskName}**。`);
+        // FC parameter validation: check taskId exists
+        const task = state.tasks.find(t => t.id === res.data.taskId);
+        if (!task) {
+          addChatMessage("model", "未找到对应的任务，请确认任务名称后重试。");
+        } else {
+          const updates: any = {};
+          if (res.data.progress !== undefined) {
+            updates.progress = Math.max(0, Math.min(100, res.data.progress)); // Clamp 0-100
+          }
+          if (res.data.date) updates.date = res.data.date;
+          if (res.data.notes) updates.notes = res.data.notes;
+          if (res.data.priority) updates.priority = res.data.priority;
+          updateTask(res.data.taskId, updates);
+          addChatMessage("model", res.data.reply || `已更新 **${task.name}**。`);
+        }
       } else if (res.intent === "delete_task" && res.data.taskId) {
-        const taskName = state.tasks.find(t => t.id === res.data.taskId)?.name || "任务";
-        deleteTask(res.data.taskId);
-        addChatMessage("model", res.data.reply || `已删除任务：**${taskName}**。`);
+        const task = state.tasks.find(t => t.id === res.data.taskId);
+        if (!task) {
+          addChatMessage("model", "未找到对应的任务，可能已被删除。");
+        } else {
+          deleteTask(res.data.taskId);
+          addChatMessage("model", res.data.reply || `已删除任务：**${task.name}**。`);
+        }
       } else if (res.intent === "generate_report" && res.data.startDate && res.data.endDate) {
         addChatMessage("model", "正在生成报告，请稍候...");
         try {
@@ -195,8 +216,12 @@ export function AgentChat() {
           addChatMessage("model", "报告生成失败，请检查 API 配置。");
         }
       } else if (res.intent === "decompose" && res.data.proposedTasks && res.data.proposedTasks.length > 0) {
-        const taskName = state.tasks.find(t => t.id === res.data.taskId)?.name || "该任务";
-        addChatMessage("model", res.data.reply || `这是 **${taskName}** 的拆解步骤：`, res.data.proposedTasks);
+        const task = state.tasks.find(t => t.id === res.data.taskId);
+        if (!task) {
+          addChatMessage("model", "未找到要拆解的任务。");
+        } else {
+          addChatMessage("model", res.data.reply || `这是 **${task.name}** 的拆解步骤：`, res.data.proposedTasks);
+        }
       }
 
       if (res.data.chatTitle && res.data.chatTitle.length > 0) {
@@ -206,6 +231,8 @@ export function AgentChat() {
       if (e.name === 'AbortError' || e.message?.includes('abort')) {
         console.log('Request aborted by user');
         addChatMessage("model", "已停止生成。");
+      } else if (e.message?.includes('超时')) {
+        addChatMessage("model", "网络超时，请检查网络连接后重试。");
       } else {
         console.error(e);
         addChatMessage("model", e.message || "抱歉，处理您的请求时出错。");

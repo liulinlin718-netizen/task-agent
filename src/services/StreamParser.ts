@@ -22,7 +22,15 @@ export async function* parseSSEStream(
 
   try {
     while (true) {
-      const { done, value } = await reader.read();
+      let readResult: ReadableStreamReadResult<Uint8Array>;
+      try {
+        readResult = await reader.read();
+      } catch {
+        // Stream interrupted — yield notice and stop
+        yield { type: "text" as const, content: "\n\n（回复中断，请重试）" };
+        return;
+      }
+      const { done, value } = readResult;
       if (done) break;
 
       buffer += decoder.decode(value, { stream: true });

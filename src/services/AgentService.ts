@@ -1,5 +1,7 @@
-import { AppState } from "../Store";
+import { AppState, ChatMessage, ChatSession } from "../Store";
 import { parseSSEStream } from "./StreamParser";
+
+const REQUEST_TIMEOUT_MS = 15000;
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -40,15 +42,29 @@ export async function callChatCompletion(params: {
   if (params.tools && params.tools.length > 0) body.tools = params.tools;
   if (params.stream) body.stream = true;
 
-  const res = await fetch(url, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      ...(params.apiKey ? { Authorization: `Bearer ${params.apiKey}` } : {}),
-    },
-    body: JSON.stringify(body),
-    signal: params.signal,
-  });
+  // Combine user abort signal with timeout signal
+  const timeoutSignal = AbortSignal.timeout(REQUEST_TIMEOUT_MS);
+  const combinedSignal = params.signal
+    ? AbortSignal.any([params.signal, timeoutSignal])
+    : timeoutSignal;
+
+  let res: Response;
+  try {
+    res = await fetch(url, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        ...(params.apiKey ? { Authorization: `Bearer ${params.apiKey}` } : {}),
+      },
+      body: JSON.stringify(body),
+      signal: combinedSignal,
+    });
+  } catch (e: any) {
+    if (e.name === "TimeoutError") {
+      throw new Error("网络超时（15s），请检查网络连接后重试。");
+    }
+    throw e;
+  }
 
   if (!res.ok) {
     const errText = await res.text().catch(() => "Unknown error");
@@ -165,52 +181,121 @@ function matchLocalRule(text: string): string | null {
   return null;
 }
 
-// ─── Prompt Builder ──────────────────────────────────────────────────────────
+// ─── Prompt Modules ──────────────────────────────────────────────────────────
 
-function buildSystemPrompt(state: AppState, _ruleHint: string | null): string {
-  const profileContext =
-    state.profile.major || state.profile.goal || state.profile.skills || state.profile.bio
-      ? `
-    [User Profile Context]
-    Profession/Field: ${state.profile.major}
-    Core Goal: ${state.profile.goal}
-    Skills: ${state.profile.skills}
-    Bio/Background: ${state.profile.bio || ""}
-    CRITICAL: DO NOT mention this profile in your response UNLESS the user explicitly asks about their identity/background.
-  `
-      : "";
+function mod_base_persona(state: AppState): string {
+  return `You are ${state.settings.agentName || "任务助理"}, a professional task management AI assistant. Reply in Chinese.
+Your style is: ${state.settings.agentStyle} (academic = 专业导师, gentle = 贴心助手, strict = 严厉督导).
+Current Date: ${state.activeDate}.
+If chat history is empty or has fewer than 2 messages, include a 'chatTitle' (3-10 chars) summarizing this conversation.`;
+}
 
-  const tasksContext = state.tasks
+function mod_task_context(state: AppState): string {
+  const tasks = state.tasks
     .filter((t) => t.date === state.activeDate)
     .map(
       (t) =>
         `${t.id}: ${t.name} (Progress: ${t.progress}%)${t.notes ? ` [Notes: ${t.notes}]` : ""}`
     )
     .join("\n");
+  return tasks ? `[Today's Tasks]\n${tasks}` : "";
+}
 
-  const currentSession = state.chatSessions.find(
-    (cs) => cs.id === state.activeChatSessionId
-  );
-  const previousHistory =
-    currentSession?.messages
-      .slice(0, -1)
-      .map((msg) => `${msg.role === "user" ? "User" : "Assistant"}: ${msg.text}`)
-      .join("\n") || "";
+function mod_chat_instruction(): string {
+  return `[Chat Instruction]
+回复要求：注重情绪陪伴，理解用户压力。拒绝爹味说教，以平等朋友的语气交流。
+如果用户表达了负面情绪，先表示理解和共情，再提供建议。
+回复简洁，不超过3段。`;
+}
 
-  return `You are ${state.settings.agentName || "任务助理"}, a professional task management AI assistant. Reply in Chinese.
-Your style is: ${state.settings.agentStyle} (academic = 专业导师, gentle = 贴心助手, strict = 严厉督导).
+function mod_profile_context(state: AppState): string {
+  if (!state.profile.major && !state.profile.goal && !state.profile.skills && !state.profile.bio)
+    return "";
+  return `[User Profile - DO NOT mention unless user asks]
+Field: ${state.profile.major}
+Goal: ${state.profile.goal}
+Skills: ${state.profile.skills}
+Bio: ${state.profile.bio || ""}`;
+}
 
-${profileContext}
+// ─── Rolling Summary ─────────────────────────────────────────────────────────
 
-Current Date: ${state.activeDate}.
-Current Tasks for today:
-${tasksContext || "No tasks yet."}
+const RECENT_ROUNDS = 3; // Keep last 3 rounds (6 messages) in full
 
-Previous Chat History:
-${previousHistory}
+function buildChatContext(session: ChatSession | undefined): string {
+  if (!session) return "";
+  const msgs = session.messages.slice(0, -1); // Exclude the current empty streaming placeholder
+  if (msgs.length === 0) return "";
 
-If chat history is empty or has fewer than 2 messages, include a 'chatTitle' (3-10 chars) summarizing this conversation.
-`;
+  const recentCount = RECENT_ROUNDS * 2;
+
+  if (msgs.length <= recentCount) {
+    // Not enough messages to summarize, send all
+    return "[Chat History]\n" + msgs.map((m) => `${m.role === "user" ? "User" : "Assistant"}: ${m.text}`).join("\n");
+  }
+
+  // Have summary + recent messages
+  const recentMsgs = msgs.slice(-recentCount);
+  const recentText = recentMsgs.map((m) => `${m.role === "user" ? "User" : "Assistant"}: ${m.text}`).join("\n");
+
+  if (session.summary) {
+    return `[Earlier Conversation Summary]\n${session.summary}\n\n[Recent Chat History]\n${recentText}`;
+  }
+
+  // No summary yet but too many messages — just send recent
+  return "[Chat History]\n" + recentText;
+}
+
+export async function generateRollingSummary(
+  session: ChatSession,
+  baseUrl: string,
+  apiKey: string,
+  model: string
+): Promise<{ summary: string; summarizedUpTo: number } | null> {
+  const msgs = session.messages;
+  const recentCount = RECENT_ROUNDS * 2;
+
+  if (msgs.length <= recentCount) return null; // Not enough to summarize
+
+  const alreadySummarized = session.summarizedUpTo || 0;
+  const toSummarizeEnd = msgs.length - recentCount;
+
+  if (toSummarizeEnd <= alreadySummarized) return null; // Already up to date
+
+  const newMessages = msgs.slice(alreadySummarized, toSummarizeEnd);
+  const newText = newMessages.map((m) => `${m.role === "user" ? "User" : "Assistant"}: ${m.text}`).join("\n");
+
+  const prompt = session.summary
+    ? `Existing summary: ${session.summary}\n\nNew messages:\n${newText}\n\nUpdate the summary in ONE sentence in Chinese. Capture key facts AND the user's emotional state.`
+    : `Summarize the following conversation in ONE sentence in Chinese. Capture key facts AND the user's emotional state:\n${newText}`;
+
+  try {
+    const res = await callChatCompletion({
+      baseUrl, apiKey, model,
+      messages: [{ role: "user", content: prompt }],
+    });
+    const data = await res.json();
+    const summary = data.choices?.[0]?.message?.content || session.summary || "";
+    return { summary, summarizedUpTo: toSummarizeEnd };
+  } catch {
+    return null; // Silently fail, don't block user
+  }
+}
+
+// ─── Prompt Builder (Modular + Routed) ───────────────────────────────────────
+
+function buildSystemPrompt(state: AppState, ruleHint: string | null): string {
+  const session = state.chatSessions.find((cs) => cs.id === state.activeChatSessionId);
+  const chatContext = buildChatContext(session);
+  const persona = mod_base_persona(state);
+
+  if (ruleHint && ruleHint !== "generate_report") {
+    // Task intent: lean prompt (no chat instruction, no profile)
+    return [persona, mod_task_context(state), chatContext].filter(Boolean).join("\n\n");
+  }
+
+  // Chat / unknown intent: full prompt
+  return [persona, mod_chat_instruction(), mod_task_context(state), mod_profile_context(state), chatContext].filter(Boolean).join("\n\n");
 }
 
 function getToolsForRequest(ruleHint: string | null): any[] {
@@ -276,9 +361,8 @@ export async function processAgentRequest(
     return parseToolCallToResponse(tc.function.name, tc.function.arguments);
   }
 
-  // Plain text response (chat)
-  const replyText = choice.message?.content || "";
-  // Try to extract chatTitle if model included it in text
+  // Plain text response (chat) — empty response fallback
+  const replyText = choice.message?.content || "收到！还有其他需要帮忙的吗？";
   return { intent: "chat", data: { reply: replyText } };
 }
 
@@ -288,11 +372,20 @@ export async function processAgentRequestStream(
   text: string,
   state: AppState,
   onTextChunk: (chunk: string) => void,
-  abortSignal?: AbortSignal
+  abortSignal?: AbortSignal,
+  onSummaryUpdate?: (summary: string, summarizedUpTo: number) => void
 ): Promise<AgentResponse> {
   const apiKey = state.settings.apiKey || "";
   const baseUrl = state.settings.apiBaseUrl;
   const apiModel = state.settings.apiModel || "gemini-2.5-flash";
+
+  // Trigger rolling summary in background (non-blocking)
+  const session = state.chatSessions.find((cs) => cs.id === state.activeChatSessionId);
+  if (session && onSummaryUpdate) {
+    generateRollingSummary(session, baseUrl, apiKey, apiModel).then((result) => {
+      if (result) onSummaryUpdate(result.summary, result.summarizedUpTo);
+    });
+  }
 
   const ruleHint = matchLocalRule(text);
   const systemPrompt = buildSystemPrompt(state, ruleHint);
@@ -331,7 +424,8 @@ export async function processAgentRequestStream(
     return parseToolCallToResponse(toolName, toolArgsBuffer);
   }
 
-  return { intent: "chat", data: { reply: fullText } };
+  // Empty response fallback
+  return { intent: "chat", data: { reply: fullText || "收到！还有其他需要帮忙的吗？" } };
 }
 
 // ─── Report Generation (Report Agent) ────────────────────────────────────────
