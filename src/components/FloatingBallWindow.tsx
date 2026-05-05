@@ -122,8 +122,8 @@ function FloatingBallContent() {
             style={{
               background: 'linear-gradient(135deg, #2563eb 0%, #3b82f6 50%, #60a5fa 100%)',
               boxShadow: nearEdge
-                ? '0 0 16px 4px rgba(96,165,250,0.6), 0 0 0 2px rgba(255,255,255,0.3) inset'
-                : '0 4px 20px rgba(37,99,235,0.45), 0 0 0 2px rgba(255,255,255,0.15) inset',
+                ? '0 0 0 3px rgba(96,165,250,0.6) inset'
+                : '0 0 0 2px rgba(255,255,255,0.15) inset',
               transition: 'box-shadow 0.15s ease',
             }}
           >
