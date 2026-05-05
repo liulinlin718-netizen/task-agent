@@ -311,14 +311,17 @@ app.whenReady().then(() => {
   // Generate a 16x16 blue circle tray icon from raw RGBA pixels
   const size = 16;
   const buf = Buffer.alloc(size * size * 4);
-  const cx = 7.5, cy = 7.5, r = 6;
+  const cx = 7.5, cy = 7.5, r = 7;
   for (let y = 0; y < size; y++) {
     for (let x = 0; x < size; x++) {
       const i = (y * size + x) * 4;
       const dist = Math.sqrt((x - cx) ** 2 + (y - cy) ** 2);
       if (dist <= r) {
-        buf[i] = 246; buf[i+1] = 130; buf[i+2] = 59; // #3B82F6 blue (BGRA order)
-        buf[i+3] = dist <= r - 0.5 ? 255 : Math.round(255 * (r - dist + 0.5)); // anti-alias edge
+        const t = dist / r; // 0=center, 1=edge
+        buf[i]   = Math.round(246 + (180 - 246) * t); // B: 246→180 (BGRA)
+        buf[i+1] = Math.round(130 + (160 - 130) * t); // G: 130→160
+        buf[i+2] = Math.round(59  + (80  - 59)  * t); // R: 59→80
+        buf[i+3] = 255;
       }
     }
   }
