@@ -102,8 +102,9 @@ function TaskCenterContent() {
   // --- Edge hover ---
   const handleEdgeHover = () => {
     if (snappedEdge) {
-      setIsHovering(true);
+      // Expand window first, then switch content after a frame
       window.electronAPI?.taskCenterExpandFromEdge(snappedEdge, panelSize.w, panelSize.h);
+      requestAnimationFrame(() => setIsHovering(true));
     }
   };
 
