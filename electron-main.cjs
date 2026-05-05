@@ -1,7 +1,8 @@
 process.env.ELECTRON_DISABLE_SECURITY_WARNINGS = 'true';
-const { app, BrowserWindow, ipcMain, screen, Tray, Menu, nativeImage } = require('electron');
+const { app, BrowserWindow, ipcMain, screen, Tray, Menu, nativeImage, dialog } = require('electron');
 const path = require('path');
 const fs = require('fs');
+const crypto = require('crypto');
 
 let mainWindow = null;
 let ballWindow = null;
@@ -9,6 +10,7 @@ let taskCenterWindow = null;
 let tray = null;
 
 const BALL_POS_FILE = path.join(app.getPath('userData'), 'ball-position.json');
+const STORE_FILE = path.join(app.getPath('userData'), 'taskagent-data.json');
 
 const isDev = !app.isPackaged;
 const VITE_DEV_URL = 'http://localhost:3000';
@@ -92,9 +94,78 @@ function createTaskCenterWindow() {
   taskCenterWindow.on('closed', () => { taskCenterWindow = null; });
 }
 
-// ─── Generic IPC ─────────────────────────────────────────────────────────────
+// ─── Generic IPC ─────────────────────────────────────────────────────────────────
 ipcMain.on('log-error', (event, err) => {
   console.log('\x1b[31m%s\x1b[0m', err);
+});
+
+// ─── Persistent Store IPC ─────────────────────────────────────────────────────────
+ipcMain.on('store:get', (event) => {
+  try { event.returnValue = fs.readFileSync(STORE_FILE, 'utf-8'); }
+  catch { event.returnValue = null; }
+});
+
+ipcMain.on('store:set', (_event, data) => {
+  try { fs.writeFileSync(STORE_FILE, data); } catch { }
+});
+
+// ─── AES-256-GCM Encrypt/Decrypt ────────────────────────────────────────────────
+function deriveKey(password, salt) {
+  return crypto.pbkdf2Sync(password, salt, 100000, 32, 'sha256');
+}
+
+function encryptData(text, password) {
+  const salt = crypto.randomBytes(16);
+  const iv = crypto.randomBytes(12);
+  const key = deriveKey(password, salt);
+  const cipher = crypto.createCipheriv('aes-256-gcm', key, iv);
+  let encrypted = cipher.update(text, 'utf8', 'base64');
+  encrypted += cipher.final('base64');
+  const tag = cipher.getAuthTag();
+  return { salt: salt.toString('base64'), iv: iv.toString('base64'), tag: tag.toString('base64'), data: encrypted };
+}
+
+function decryptData(obj, password) {
+  const salt = Buffer.from(obj.salt, 'base64');
+  const iv = Buffer.from(obj.iv, 'base64');
+  const tag = Buffer.from(obj.tag, 'base64');
+  const key = deriveKey(password, salt);
+  const decipher = crypto.createDecipheriv('aes-256-gcm', key, iv);
+  decipher.setAuthTag(tag);
+  let decrypted = decipher.update(obj.data, 'base64', 'utf8');
+  decrypted += decipher.final('utf8');
+  return decrypted;
+}
+
+// ─── Data Export/Import IPC ────────────────────────────────────────────────────
+ipcMain.handle('data:export', async (_event, password) => {
+  try {
+    const data = fs.readFileSync(STORE_FILE, 'utf-8');
+    const encrypted = encryptData(data, password);
+    const { filePath } = await dialog.showSaveDialog({
+      defaultPath: `taskagent-backup-${new Date().toISOString().slice(0,10)}.taskagent`,
+      filters: [{ name: 'TaskAgent Backup', extensions: ['taskagent'] }],
+    });
+    if (!filePath) return false;
+    fs.writeFileSync(filePath, JSON.stringify(encrypted));
+    return true;
+  } catch { return false; }
+});
+
+ipcMain.handle('data:import', async (_event, password) => {
+  try {
+    const { filePaths } = await dialog.showOpenDialog({
+      filters: [{ name: 'TaskAgent Backup', extensions: ['taskagent'] }],
+      properties: ['openFile'],
+    });
+    if (!filePaths || !filePaths[0]) return null;
+    const encrypted = JSON.parse(fs.readFileSync(filePaths[0], 'utf-8'));
+    const decrypted = decryptData(encrypted, password);
+    fs.writeFileSync(STORE_FILE, decrypted);
+    return decrypted;
+  } catch {
+    return '__ERROR__';
+  }
 });
 
 let prevBallVisible = false;

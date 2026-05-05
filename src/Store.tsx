@@ -124,8 +124,9 @@ const StoreContext = createContext<StoreContextType | null>(null);
 
 export function StoreProvider({ children }: { children: React.ReactNode }) {
   const [state, setState] = useState<AppState>(() => {
-    // Try new key first, fall back to old key for backward compatibility
-    const saved = localStorage.getItem('taskagent-state') || localStorage.getItem('scholaragent-state');
+    // Try Electron IPC store first, fall back to localStorage
+    const electronData = (window as any).electronAPI?.storeGet?.();
+    const saved = electronData || localStorage.getItem('taskagent-state') || localStorage.getItem('scholaragent-state');
     if (saved) {
       const p = JSON.parse(saved);
       // migrations
@@ -168,7 +169,12 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
   });
 
   useEffect(() => {
-    localStorage.setItem('taskagent-state', JSON.stringify(state));
+    const json = JSON.stringify(state);
+    // Persist to Electron IPC store if available, otherwise localStorage
+    if ((window as any).electronAPI?.storeSet) {
+      (window as any).electronAPI.storeSet(json);
+    }
+    localStorage.setItem('taskagent-state', json);
   }, [state]);
 
   // Cross-window sync: when another Electron window updates localStorage, sync here

@@ -31,6 +31,14 @@ contextBridge.exposeInMainWorld('electronAPI', {
   taskCenterExpandFromEdge: (edge, width, height) => ipcRenderer.send('taskcenter:expand-from-edge', edge, width, height),
   taskCenterCheckSnap: () => ipcRenderer.sendSync('taskcenter:check-snap'),
   onTaskCenterAutoSnap: (callback) => ipcRenderer.on('taskcenter:auto-snap', (_, edge) => callback(edge)),
+
+  // Persistent store
+  storeGet: () => ipcRenderer.sendSync('store:get'),
+  storeSet: (data) => ipcRenderer.send('store:set', data),
+
+  // Data export/import
+  dataExport: (password) => ipcRenderer.invoke('data:export', password),
+  dataImport: (password) => ipcRenderer.invoke('data:import', password),
 });
 
 window.onerror = (message, source, lineno, colno, error) => {
