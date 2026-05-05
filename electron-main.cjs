@@ -317,7 +317,7 @@ app.whenReady().then(() => {
       const i = (y * size + x) * 4;
       const dist = Math.sqrt((x - cx) ** 2 + (y - cy) ** 2);
       if (dist <= r) {
-        buf[i] = 59; buf[i+1] = 130; buf[i+2] = 246; // #3B82F6 blue
+        buf[i] = 246; buf[i+1] = 130; buf[i+2] = 59; // #3B82F6 blue (BGRA order)
         buf[i+3] = dist <= r - 0.5 ? 255 : Math.round(255 * (r - dist + 0.5)); // anti-alias edge
       }
     }
