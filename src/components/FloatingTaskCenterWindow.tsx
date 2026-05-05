@@ -11,7 +11,6 @@ function TaskCenterContent() {
   const [isHovering, setIsHovering] = useState(false);
   const [isResizing, setIsResizing] = useState(false);
   const [isDragging, setIsDragging] = useState(false);
-  const [isTransitioning, setIsTransitioning] = useState(false);
   const dragStartOffset = useRef({ x: 0, y: 0 });
   const resizeStart = useRef({ x: 0, y: 0, w: 320, h: 480 });
   const [panelSize, setPanelSize] = useState({ w: 320, h: 480 });
@@ -103,12 +102,8 @@ function TaskCenterContent() {
   // --- Edge hover ---
   const handleEdgeHover = () => {
     if (snappedEdge) {
-      // 1. Render transparent content during expansion
-      setIsTransitioning(true);
-      // 2. Expand window
+      setIsHovering(true);
       window.electronAPI?.taskCenterExpandFromEdge(snappedEdge, panelSize.w, panelSize.h);
-      // 3. After setBounds takes effect, show panel
-      setTimeout(() => { setIsTransitioning(false); setIsHovering(true); }, 60);
     }
   };
 
@@ -129,31 +124,14 @@ function TaskCenterContent() {
     setNewTaskInput('');
   };
 
-  // --- Transparent during transition ---
-  if (isTransitioning) {
-    return <div className="w-full h-full" style={{ background: 'transparent' }} />;
-  }
-
   // --- Snapped edge indicator ---
   if (snappedEdge && !isHovering) {
     return (
       <div
         onMouseEnter={handleEdgeHover}
-        className="w-full h-full flex items-center justify-center cursor-pointer"
+        className="w-full h-full cursor-pointer"
         style={{ background: 'transparent' }}
-      >
-        <motion.div
-          initial={{ opacity: 0 }}
-          animate={{ opacity: 1 }}
-          className="w-full h-full flex items-center justify-center"
-          style={{
-            background: 'linear-gradient(180deg, rgba(37,99,235,0.6) 0%, rgba(59,130,246,0.35) 100%)',
-            borderRadius: snappedEdge === 'right' ? '3px 0 0 3px' : '0 3px 3px 0',
-          }}
-        >
-          {snappedEdge === 'right' ? <ChevronLeft className="w-3 h-3 text-white/80" /> : <ChevronRight className="w-3 h-3 text-white/80" />}
-        </motion.div>
-      </div>
+      />
     );
   }
 
