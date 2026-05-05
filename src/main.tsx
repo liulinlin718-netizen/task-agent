@@ -22,8 +22,10 @@ function RootComponent() {
 
 // For floating windows, make document background transparent
 if (windowType === 'ball' || windowType === 'taskcenter') {
-  document.documentElement.style.background = 'transparent';
-  document.body.style.background = 'transparent';
+  document.documentElement.style.setProperty('background', 'transparent', 'important');
+  document.body.style.setProperty('background', 'transparent', 'important');
+  const root = document.getElementById('root');
+  if (root) root.style.setProperty('background', 'transparent', 'important');
 }
 
 createRoot(document.getElementById('root')!).render(

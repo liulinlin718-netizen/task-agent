@@ -191,10 +191,11 @@ ipcMain.on('app:update-taskcenter', (event, enabled) => {
   const { width: sw, height: sh } = screen.getPrimaryDisplay().workAreaSize;
   if (!taskCenterWindow || taskCenterWindow.isDestroyed()) return;
   if (enabled && !prevTcVisible) {
+    // Show at strip size first to avoid flash of full panel
     taskCenterWindow.setResizable(true);
-    taskCenterWindow.setBounds({ x: sw - 360, y: Math.round((sh - 480) / 2), width: 320, height: 480 });
+    taskCenterWindow.setBounds({ x: sw - TC_STRIP_W, y: Math.round((sh - 480) / 2), width: TC_STRIP_W, height: 480 });
     taskCenterWindow.setResizable(false);
-    taskCenterWindow.webContents.send('taskcenter:auto-snap', null);
+    taskCenterWindow.webContents.send('taskcenter:auto-snap', 'right');
     taskCenterWindow.showInactive();
   } else if (enabled) {
     taskCenterWindow.showInactive();
