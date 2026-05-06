@@ -184,24 +184,6 @@ export function AgentChat() {
             sessions[idx] = { ...sessions[idx], summary, summarizedUpTo };
             return { ...s, chatSessions: sessions };
           });
-        },
-        // Clear streamed text when tool_call is detected (prevents double response)
-        () => {
-          // Remove the placeholder streaming message
-          setState(s => {
-            const session = s.chatSessions.find(cs => cs.id === s.activeChatSessionId);
-            if (!session) return s;
-            const msgs = session.messages;
-            if (msgs.length > 0 && msgs[msgs.length - 1].role === 'model') {
-              const sessions = s.chatSessions.map(cs =>
-                cs.id === s.activeChatSessionId
-                  ? { ...cs, messages: msgs.slice(0, -1) }
-                  : cs
-              );
-              return { ...s, chatSessions: sessions };
-            }
-            return s;
-          });
         }
       );
 

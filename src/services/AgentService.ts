@@ -402,7 +402,6 @@ export async function processAgentRequestStream(
   onTextChunk: (chunk: string) => void,
   abortSignal?: AbortSignal,
   onSummaryUpdate?: (summary: string, summarizedUpTo: number) => void,
-  onClearStreamedText?: () => void
 ): Promise<AgentResponse> {
   const { apiKey, baseUrl, model: apiModel } = getChatConfig(state);
 
@@ -417,6 +416,7 @@ export async function processAgentRequestStream(
   const ruleHint = matchLocalRule(text);
   const systemPrompt = buildSystemPrompt(state, ruleHint);
   const tools = getToolsForRequest(ruleHint);
+  const hasTools = tools.length > 0;
 
   const res = await callChatCompletion({
     baseUrl,
@@ -439,7 +439,11 @@ export async function processAgentRequestStream(
   for await (const chunk of parseSSEStream(res)) {
     if (chunk.type === "text") {
       fullText += chunk.content;
-      onTextChunk(chunk.content);
+      // Only stream text in real-time when no tools are involved
+      // (prevents double response: streamed text + tool result)
+      if (!hasTools) {
+        onTextChunk(chunk.content);
+      }
     } else if (chunk.type === "tool_call") {
       isToolCall = true;
       if (chunk.toolName) toolName = chunk.toolName;
@@ -448,13 +452,17 @@ export async function processAgentRequestStream(
   }
 
   if (isToolCall && toolName) {
-    // Discard any streamed text — only use the structured tool response
-    if (fullText && onClearStreamedText) onClearStreamedText();
+    // Tool call: discard any text, return structured response
     return parseToolCallToResponse(toolName, toolArgsBuffer);
   }
 
   // Strip leaked metadata (model sometimes outputs chatTitle in plain text)
   const cleanText = fullText.replace(/\n*chatTitle[：:]\s*.+$/i, '').trim();
+
+  // If text was buffered (tools were present but model chose chat), flush it now
+  if (hasTools && cleanText) {
+    onTextChunk(cleanText);
+  }
 
   // Empty response fallback
   return { intent: "chat", data: { reply: cleanText || "收到！还有其他需要帮忙的吗？" } };
