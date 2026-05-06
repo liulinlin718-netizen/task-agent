@@ -1,5 +1,4 @@
 import { AppState, ChatMessage, ChatSession } from "../Store";
-import { parseSSEStream } from "./StreamParser";
 
 const REQUEST_TIMEOUT_MS = 15000;
 
@@ -29,9 +28,9 @@ export async function callChatCompletion(params: {
   apiKey: string;
   model: string;
   messages: Array<{ role: string; content: string }>;
-  tools?: any[];
   stream?: boolean;
   signal?: AbortSignal;
+  jsonMode?: boolean;
 }): Promise<Response> {
   const url = `${params.baseUrl.replace(/\/$/, "")}/chat/completions`;
 
@@ -39,8 +38,8 @@ export async function callChatCompletion(params: {
     model: params.model,
     messages: params.messages,
   };
-  if (params.tools && params.tools.length > 0) body.tools = params.tools;
   if (params.stream) body.stream = true;
+  if (params.jsonMode) body.response_format = { type: "json_object" };
 
   // Combine user abort signal with timeout signal
   const timeoutSignal = AbortSignal.timeout(REQUEST_TIMEOUT_MS);
@@ -78,97 +77,7 @@ export async function callChatCompletion(params: {
   return res;
 }
 
-// ─── Tool Definitions (5 Tools) ──────────────────────────────────────────────
-
-const TOOLS = [
-  {
-    type: "function",
-    function: {
-      name: "add_tasks",
-      description: "当用户要求添加、新增任务或待办事项时调用。也包括用户描述了一件要做的事但没有明确说'添加任务'的情况。",
-      parameters: {
-        type: "object",
-        properties: {
-          proposedTasks: { type: "array", items: { type: "string" }, description: "待添加的任务名称列表，每项不超过20字。第一项必须是用户原文要求的任务，后续2项为相关推荐" },
-          targetDate: { type: "string", description: "目标日期 YYYY-MM-DD，仅当用户明确指定日期时才提供" },
-          reply: { type: "string", description: "给用户的中文回复" },
-          chatTitle: { type: "string", description: "3-10字的对话标题摘要，仅在对话历史少于2条时提供" },
-        },
-        required: ["proposedTasks", "reply"],
-      },
-    },
-  },
-  {
-    type: "function",
-    function: {
-      name: "update_task",
-      description: "当用户提到完成了某件事、做完了某事、某任务有进展、或要求更新任务的进度/日期/备注/优先级时调用。即使用户没有明确说'更新进度'，只要语义上表示某个任务有进展或已完成，都应调用此工具。根据今日任务列表找到最匹配的 taskId。",
-      parameters: {
-        type: "object",
-        properties: {
-          taskId: { type: "string", description: "要更新的任务 ID" },
-          progress: { type: "number", description: "新进度值 0-100" },
-          date: { type: "string", description: "新日期 YYYY-MM-DD" },
-          notes: { type: "string", description: "备注内容" },
-          priority: { type: "string", enum: ["low", "medium", "high"], description: "优先级" },
-          reply: { type: "string", description: "给用户的中文回复" },
-          chatTitle: { type: "string", description: "3-10字的对话标题摘要" },
-        },
-        required: ["taskId", "reply"],
-      },
-    },
-  },
-  {
-    type: "function",
-    function: {
-      name: "delete_task",
-      description: "当用户要求删除某个任务时调用",
-      parameters: {
-        type: "object",
-        properties: {
-          taskId: { type: "string", description: "要删除的任务 ID" },
-          reply: { type: "string", description: "给用户的中文回复" },
-          chatTitle: { type: "string", description: "3-10字的对话标题摘要" },
-        },
-        required: ["taskId", "reply"],
-      },
-    },
-  },
-  {
-    type: "function",
-    function: {
-      name: "decompose",
-      description: "当用户要求拆解、分解某个任务为子任务时调用",
-      parameters: {
-        type: "object",
-        properties: {
-          taskId: { type: "string", description: "要拆解的任务 ID" },
-          proposedTasks: { type: "array", items: { type: "string" }, description: "拆解后的子任务列表，每项不超过20字" },
-          reply: { type: "string", description: "给用户的中文回复" },
-          chatTitle: { type: "string", description: "3-10字的对话标题摘要" },
-        },
-        required: ["taskId", "proposedTasks", "reply"],
-      },
-    },
-  },
-  {
-    type: "function",
-    function: {
-      name: "generate_report",
-      description: "当用户要求生成进度总结、报告、回顾时调用",
-      parameters: {
-        type: "object",
-        properties: {
-          startDate: { type: "string", description: "报告起始日期 YYYY-MM-DD" },
-          endDate: { type: "string", description: "报告结束日期 YYYY-MM-DD" },
-          reply: { type: "string", description: "给用户的中文回复" },
-          chatTitle: { type: "string", description: "3-10字的对话标题摘要" },
-        },
-        required: ["startDate", "endDate", "reply"],
-      },
-    },
-  },
-];
+// (Tool definitions removed — using JSON structured output instead for efficiency)
 
 // ─── Local Rule Layer ────────────────────────────────────────────────────────
 
@@ -204,17 +113,23 @@ export function getReportConfig(state: AppState) {
 function mod_base_persona(state: AppState): string {
   return `You are ${state.settings.agentName || "任务助理"}, a professional task management AI assistant. Reply in Chinese.
 Your style is: ${state.settings.agentStyle} (academic = 专业导师, gentle = 贴心助手, strict = 严厉督导).
-Current Date: ${state.activeDate}.
+Current Date: ${state.activeDate}.`;
+}
 
-[Intent Recognition Guidance]
-Analyze the user's input and determine intent:
-- If the user mentions finishing, completing, or making progress on something that matches a task in Today's Tasks, call update_task with the matching taskId and set progress accordingly (100 for completion).
-- If the user wants to add a new task or describes something they need to do, call add_tasks.
-- If the user asks to delete a task, call delete_task.
-- If the user asks to break down a task, call decompose.
-- If the user asks for a summary or report, call generate_report.
-- Otherwise, just chat naturally.
-Do NOT include any metadata like chatTitle in your reply text.`;
+function mod_intent_instruction(): string {
+  return `[Output Format]
+You MUST output ONLY valid JSON. Analyze the user's input, determine intent, and respond in this exact format:
+{"intent": "<intent>", "data": {<fields>}}
+
+Intents and required fields:
+- "add_tasks": User wants to add/create a task. Fields: proposedTasks (array, first=user's request, then 2 recommendations, each ≤20 chars), reply (string), targetDate? (YYYY-MM-DD, only if user specifies a date), chatTitle? (3-10 chars, only if chat history < 2 messages)
+- "update_task": User mentions completing, finishing, or making progress on something matching a task in Today's Tasks. Find the best matching taskId. Fields: taskId, progress (0-100, 100 for completion), reply, chatTitle?. Optional: date, notes, priority (low/medium/high)
+- "delete_task": User wants to remove a task. Fields: taskId, reply, chatTitle?
+- "decompose": User wants to break down a task. Fields: taskId, proposedTasks (subtasks, each ≤20 chars), reply, chatTitle?
+- "generate_report": User asks for a summary/report. Fields: startDate, endDate (YYYY-MM-DD), reply, chatTitle?
+- "chat": Normal conversation, no task action. Fields: reply
+
+IMPORTANT: Even if user doesn't explicitly say "update progress", if they mention finishing or doing something that matches a task, use "update_task".`;
 }
 
 function mod_task_context(state: AppState): string {
@@ -319,34 +234,30 @@ function buildSystemPrompt(state: AppState, ruleHint: string | null): string {
   const taskCtx = mod_task_context(state);
 
   if (ruleHint && ruleHint !== "generate_report") {
-    // Task intent confirmed by rule: lean prompt
-    return [persona, taskCtx, chatContext].filter(Boolean).join("\n\n");
+    // Task intent confirmed by rule: lean prompt + intent instruction for JSON format
+    return [persona, mod_intent_instruction(), taskCtx, chatContext].filter(Boolean).join("\n\n");
   }
 
-  // Model fallback: always provide task context (for tool matching)
-  // + chat instruction (with "don't proactively mention tasks" guard)
-  return [persona, mod_chat_instruction(), taskCtx, mod_profile_context(state), chatContext].filter(Boolean).join("\n\n");
+  // Model fallback: full prompt with intent instruction + task context
+  return [persona, mod_intent_instruction(), mod_chat_instruction(), taskCtx, mod_profile_context(state), chatContext].filter(Boolean).join("\n\n");
 }
 
-function getToolsForRequest(ruleHint: string | null): any[] {
-  if (!ruleHint) return TOOLS;
-  const matched = TOOLS.find((t) => t.function.name === ruleHint);
-  return matched ? [matched] : TOOLS;
-}
+// ─── JSON Response Parser ────────────────────────────────────────────────────
 
-// ─── Parse Tool Call Response ────────────────────────────────────────────────
-
-function parseToolCallToResponse(toolName: string, argsStr: string): AgentResponse {
+function parseJsonResponse(text: string): AgentResponse {
   try {
-    const args = JSON.parse(argsStr);
-    return {
-      intent: toolName as AgentResponse["intent"],
-      data: {
-        ...args,
-      },
-    };
+    // Clean markdown wrappers if any
+    const cleaned = text.replace(/```json/gi, '').replace(/```/gi, '').trim();
+    const parsed = JSON.parse(cleaned);
+    // Validate intent
+    const validIntents = ['add_tasks', 'update_task', 'delete_task', 'decompose', 'generate_report', 'chat'];
+    if (!validIntents.includes(parsed.intent)) {
+      return { intent: 'chat', data: { reply: parsed.data?.reply || text } };
+    }
+    return { intent: parsed.intent, data: parsed.data || {} };
   } catch {
-    return { intent: "chat", data: { reply: "抱歉，我在处理你的请求时遇到了问题，请再试一次。" } };
+    // If JSON parsing fails, treat entire text as chat reply
+    return { intent: 'chat', data: { reply: text || '收到！还有其他需要帮忙的吗？' } };
   }
 }
 
@@ -361,7 +272,6 @@ export async function processAgentRequest(
 
   const ruleHint = matchLocalRule(text);
   const systemPrompt = buildSystemPrompt(state, ruleHint);
-  const tools = getToolsForRequest(ruleHint);
 
   const res = await callChatCompletion({
     baseUrl,
@@ -371,27 +281,15 @@ export async function processAgentRequest(
       { role: "system", content: systemPrompt },
       { role: "user", content: text },
     ],
-    tools,
     stream: false,
+    jsonMode: true,
     signal: abortSignal,
   });
 
   const data = await res.json();
   const choice = data.choices?.[0];
-
-  if (!choice) {
-    return { intent: "chat", data: { reply: "收到！还有其他需要帮忙的吗？" } };
-  }
-
-  // Function Calling response
-  if (choice.message?.tool_calls && choice.message.tool_calls.length > 0) {
-    const tc = choice.message.tool_calls[0];
-    return parseToolCallToResponse(tc.function.name, tc.function.arguments);
-  }
-
-  // Plain text response (chat) — empty response fallback
-  const replyText = choice.message?.content || "收到！还有其他需要帮忙的吗？";
-  return { intent: "chat", data: { reply: replyText } };
+  const content = choice?.message?.content || '';
+  return parseJsonResponse(content);
 }
 
 // ─── Main Agent Request with Typewriter ─────────────────────────────────────────
@@ -415,9 +313,8 @@ export async function processAgentRequestStream(
 
   const ruleHint = matchLocalRule(text);
   const systemPrompt = buildSystemPrompt(state, ruleHint);
-  const tools = getToolsForRequest(ruleHint);
 
-  // Non-streaming call: model returns EITHER text OR tool_call, no waste
+  // JSON mode: model returns structured intent+data, no tool definitions needed
   const res = await callChatCompletion({
     baseUrl,
     apiKey,
@@ -426,37 +323,28 @@ export async function processAgentRequestStream(
       { role: "system", content: systemPrompt },
       { role: "user", content: text },
     ],
-    tools,
     stream: false,
+    jsonMode: true,
     signal: abortSignal,
   });
 
   const data = await res.json();
   const choice = data.choices?.[0];
-
-  if (!choice) {
-    return { intent: "chat", data: { reply: "收到！还有其他需要帮忙的吗？" } };
-  }
-
-  // Tool call → structured response (no text wasted)
-  if (choice.message?.tool_calls && choice.message.tool_calls.length > 0) {
-    const tc = choice.message.tool_calls[0];
-    return parseToolCallToResponse(tc.function.name, tc.function.arguments);
-  }
+  const content = choice?.message?.content || '';
+  const parsed = parseJsonResponse(content);
 
   // Chat response → simulate typewriter effect
-  const rawText = choice.message?.content || "收到！还有其他需要帮忙的吗？";
-  const cleanText = rawText.replace(/\n*chatTitle[：:]\s*.+$/i, '').trim();
-
-  // Client-side typewriter: reveal text progressively
-  const chunkSize = 2; // characters per tick
-  for (let i = 0; i < cleanText.length; i += chunkSize) {
-    if (abortSignal?.aborted) break;
-    onTextChunk(cleanText.slice(i, i + chunkSize));
-    await new Promise(r => setTimeout(r, 15));
+  if (parsed.intent === 'chat' && parsed.data.reply) {
+    const replyText = parsed.data.reply;
+    const chunkSize = 2;
+    for (let i = 0; i < replyText.length; i += chunkSize) {
+      if (abortSignal?.aborted) break;
+      onTextChunk(replyText.slice(i, i + chunkSize));
+      await new Promise(r => setTimeout(r, 15));
+    }
   }
 
-  return { intent: "chat", data: { reply: cleanText } };
+  return parsed;
 }
 
 // ─── Report Generation (Report Agent) ────────────────────────────────────────
