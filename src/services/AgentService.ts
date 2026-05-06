@@ -380,17 +380,17 @@ export async function generateCustomSummary(
     Here are the tasks from those dates:
     ${tasksContext}
 
-    Write a cohesive, insightful, and motivating summary report in Markdown.
+    Write a cohesive, insightful, and motivating summary report in Markdown. Highlight completions, overall progress, and areas where focus is needed. Keep it relatively concise but structural.
 
     原则：
     1. 拒绝爹味与说教：充分理解研究生多线并行的压力。
-    2. 包容多样性：任务可能涉及生活、求职、娱乐，不要强行将其与学术研究挂钩。
+    2. 包容多样性：任务可能涉及生活、求职、娱乐，不要强行将其与学术研究挂钩，就事论事地评价其进展。
 
-    生成报告的结构：
+    生成报告的结构（请严格按顺序包含以下部分）：
     1. 整体概览
-    2. 任务进度审计
+    2. 任务进度审计（请分段落、总结性地概述进展，不需要一条一条罗列和评价）
     3. 关键问题和建议
-    4. 抓紧行动
+    4. 抓紧行动（敦促用户要做的事）
     5. 结语
   `;
 
