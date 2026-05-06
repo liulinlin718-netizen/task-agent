@@ -85,7 +85,7 @@ const TOOLS = [
     type: "function",
     function: {
       name: "add_tasks",
-      description: "当用户要求添加、新增任务或待办事项时调用",
+      description: "当用户要求添加、新增任务或待办事项时调用。也包括用户描述了一件要做的事但没有明确说'添加任务'的情况。",
       parameters: {
         type: "object",
         properties: {
@@ -102,7 +102,7 @@ const TOOLS = [
     type: "function",
     function: {
       name: "update_task",
-      description: "当用户要求更新任务的进度、日期、备注或优先级时调用",
+      description: "当用户提到完成了某件事、做完了某事、某任务有进展、或要求更新任务的进度/日期/备注/优先级时调用。即使用户没有明确说'更新进度'，只要语义上表示某个任务有进展或已完成，都应调用此工具。根据今日任务列表找到最匹配的 taskId。",
       parameters: {
         type: "object",
         properties: {
@@ -205,7 +205,16 @@ function mod_base_persona(state: AppState): string {
   return `You are ${state.settings.agentName || "任务助理"}, a professional task management AI assistant. Reply in Chinese.
 Your style is: ${state.settings.agentStyle} (academic = 专业导师, gentle = 贴心助手, strict = 严厉督导).
 Current Date: ${state.activeDate}.
-Do NOT include any metadata like chatTitle in your reply text. Just reply naturally.`;
+
+[Intent Recognition Guidance]
+Analyze the user's input and determine intent:
+- If the user mentions finishing, completing, or making progress on something that matches a task in Today's Tasks, call update_task with the matching taskId and set progress accordingly (100 for completion).
+- If the user wants to add a new task or describes something they need to do, call add_tasks.
+- If the user asks to delete a task, call delete_task.
+- If the user asks to break down a task, call decompose.
+- If the user asks for a summary or report, call generate_report.
+- Otherwise, just chat naturally.
+Do NOT include any metadata like chatTitle in your reply text.`;
 }
 
 function mod_task_context(state: AppState): string {
@@ -303,7 +312,7 @@ export async function generateRollingSummary(
 // ─── Context Need Detection ──────────────────────────────────────────────────
 
 function needsTaskContext(text: string): boolean {
-  return /任务|待办|进度|完成|做完|计划|安排|今天|明天|昨天|日程|todo|task/i.test(text);
+  return /任务|待办|进度|完成|做完|做好|搞定|练完|健完|跑完|写完|读完|看完|学完|交了|交完|弄完|干完|计划|安排|今天|明天|昨天|日程|todo|task/i.test(text);
 }
 
 // ─── Prompt Builder (Modular + Routed) ───────────────────────────────────────
