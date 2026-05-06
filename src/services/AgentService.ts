@@ -300,20 +300,31 @@ export async function generateRollingSummary(
   }
 }
 
+// ─── Context Need Detection ──────────────────────────────────────────────────
+
+function needsTaskContext(text: string): boolean {
+  return /任务|待办|进度|完成|做完|计划|安排|今天|明天|昨天|日程|todo|task/i.test(text);
+}
+
 // ─── Prompt Builder (Modular + Routed) ───────────────────────────────────────
 
-function buildSystemPrompt(state: AppState, ruleHint: string | null): string {
+function buildSystemPrompt(state: AppState, ruleHint: string | null, userText: string): string {
   const session = state.chatSessions.find((cs) => cs.id === state.activeChatSessionId);
   const chatContext = buildChatContext(session);
   const persona = mod_base_persona(state);
 
   if (ruleHint && ruleHint !== "generate_report") {
-    // Task intent: lean prompt (no chat instruction, no profile)
+    // Task intent confirmed: lean prompt with task context
     return [persona, mod_task_context(state), chatContext].filter(Boolean).join("\n\n");
   }
 
-  // Chat / unknown intent: no task context (saves tokens, avoids unnecessary task reading)
-  return [persona, mod_chat_instruction(), mod_profile_context(state), chatContext].filter(Boolean).join("\n\n");
+  // Chat / unknown intent: only inject task_context if user mentions tasks
+  const modules = [persona, mod_chat_instruction(), mod_profile_context(state)];
+  if (needsTaskContext(userText)) {
+    modules.push(mod_task_context(state));
+  }
+  modules.push(chatContext);
+  return modules.filter(Boolean).join("\n\n");
 }
 
 function getToolsForRequest(ruleHint: string | null): any[] {
@@ -348,7 +359,7 @@ export async function processAgentRequest(
   const { apiKey, baseUrl, model: apiModel } = getChatConfig(state);
 
   const ruleHint = matchLocalRule(text);
-  const systemPrompt = buildSystemPrompt(state, ruleHint);
+  const systemPrompt = buildSystemPrompt(state, ruleHint, text);
   const tools = getToolsForRequest(ruleHint);
 
   const res = await callChatCompletion({
@@ -389,7 +400,8 @@ export async function processAgentRequestStream(
   state: AppState,
   onTextChunk: (chunk: string) => void,
   abortSignal?: AbortSignal,
-  onSummaryUpdate?: (summary: string, summarizedUpTo: number) => void
+  onSummaryUpdate?: (summary: string, summarizedUpTo: number) => void,
+  onClearStreamedText?: () => void
 ): Promise<AgentResponse> {
   const { apiKey, baseUrl, model: apiModel } = getChatConfig(state);
 
@@ -402,7 +414,7 @@ export async function processAgentRequestStream(
   }
 
   const ruleHint = matchLocalRule(text);
-  const systemPrompt = buildSystemPrompt(state, ruleHint);
+  const systemPrompt = buildSystemPrompt(state, ruleHint, text);
   const tools = getToolsForRequest(ruleHint);
 
   const res = await callChatCompletion({
@@ -435,6 +447,8 @@ export async function processAgentRequestStream(
   }
 
   if (isToolCall && toolName) {
+    // Discard any streamed text — only use the structured tool response
+    if (fullText && onClearStreamedText) onClearStreamedText();
     return parseToolCallToResponse(toolName, toolArgsBuffer);
   }
 
