@@ -370,7 +370,10 @@ export function AgentChat() {
       <div className="flex-1 overflow-y-auto w-full" ref={scrollRef}>
         <div className="p-6 space-y-6 min-h-max">
           <AnimatePresence>
-            {currentSession?.messages.map((msg, i) => (
+            {currentSession?.messages.map((msg, i) => {
+              // Skip empty model messages (streaming placeholder before text arrives)
+              if (msg.role === "model" && !msg.text && !msg.proposedTasks?.length) return null;
+              return (
               <motion.div 
                 key={i} 
                 initial={{ opacity: 0, y: 10, scale: 0.95 }}
@@ -452,7 +455,8 @@ export function AgentChat() {
                   </div>
                 )}
               </motion.div>
-            ))}
+              );
+            })}
             {isTyping && (
               <motion.div 
                 initial={{ opacity: 0 }} animate={{ opacity: 1 }}
