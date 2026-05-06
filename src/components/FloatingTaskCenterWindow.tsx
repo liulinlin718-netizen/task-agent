@@ -214,16 +214,26 @@ function TaskCenterContent() {
   );
 }
 
-// --- Task Card with wheel scroll progress ---
+// --- Task Card with wheel scroll progress (only on progress ring area) ---
 function TaskCard({ task, index, updateTask }: { task: any; index: number; updateTask: (id: string, u: any) => void }) {
-  const handleWheel = (e: React.WheelEvent) => {
-    e.stopPropagation();
-    if (e.deltaY < 0) {
-      updateTask(task.id, { progress: Math.min(task.progress + 1, 100) });
-    } else {
-      updateTask(task.id, { progress: Math.max(task.progress - 1, 0) });
-    }
-  };
+  const progressRef = useRef<HTMLDivElement>(null);
+
+  // Use native event listener with { passive: false } to allow preventDefault
+  useEffect(() => {
+    const el = progressRef.current;
+    if (!el) return;
+    const handler = (e: WheelEvent) => {
+      e.preventDefault(); // prevent page scroll when hovering progress area
+      e.stopPropagation();
+      if (e.deltaY < 0) {
+        updateTask(task.id, { progress: Math.min(task.progress + 1, 100) });
+      } else {
+        updateTask(task.id, { progress: Math.max(task.progress - 1, 0) });
+      }
+    };
+    el.addEventListener('wheel', handler, { passive: false });
+    return () => el.removeEventListener('wheel', handler);
+  }, [task.id, task.progress, updateTask]);
 
   return (
     <motion.div
@@ -232,11 +242,13 @@ function TaskCard({ task, index, updateTask }: { task: any; index: number; updat
       exit={{ opacity: 0, x: 8 }}
       transition={{ delay: index * 0.02 }}
       className="flex items-center gap-2.5 px-3 py-2.5 rounded-xl bg-white/[0.03] hover:bg-white/[0.06] border border-white/[0.04] transition-all"
-      onWheel={handleWheel}
-      title="滚动滚轮更改进度"
     >
-      {/* Progress ring */}
-      <div className="relative w-7 h-7 shrink-0 select-none">
+      {/* Progress ring — scroll here to change progress */}
+      <div
+        ref={progressRef}
+        className="relative w-7 h-7 shrink-0 select-none cursor-ns-resize"
+        title="滚动滚轮更改进度"
+      >
         <svg className="w-7 h-7 -rotate-90" viewBox="0 0 28 28">
           <circle cx="14" cy="14" r="11" fill="none" stroke="rgba(255,255,255,0.06)" strokeWidth="2.5" />
           <circle cx="14" cy="14" r="11" fill="none"
