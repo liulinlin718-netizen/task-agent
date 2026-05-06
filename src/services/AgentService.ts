@@ -394,7 +394,7 @@ export async function processAgentRequest(
   return { intent: "chat", data: { reply: replyText } };
 }
 
-// ─── Streaming Agent Request ────────────────────────────────────────────────────
+// ─── Main Agent Request with Typewriter ─────────────────────────────────────────
 
 export async function processAgentRequestStream(
   text: string,
@@ -416,8 +416,8 @@ export async function processAgentRequestStream(
   const ruleHint = matchLocalRule(text);
   const systemPrompt = buildSystemPrompt(state, ruleHint);
   const tools = getToolsForRequest(ruleHint);
-  const hasTools = tools.length > 0;
 
+  // Non-streaming call: model returns EITHER text OR tool_call, no waste
   const res = await callChatCompletion({
     baseUrl,
     apiKey,
@@ -427,45 +427,36 @@ export async function processAgentRequestStream(
       { role: "user", content: text },
     ],
     tools,
-    stream: true,
+    stream: false,
     signal: abortSignal,
   });
 
-  let toolName = "";
-  let toolArgsBuffer = "";
-  let isToolCall = false;
-  let fullText = "";
+  const data = await res.json();
+  const choice = data.choices?.[0];
 
-  for await (const chunk of parseSSEStream(res)) {
-    if (chunk.type === "text") {
-      fullText += chunk.content;
-      // Only stream text in real-time when no tools are involved
-      // (prevents double response: streamed text + tool result)
-      if (!hasTools) {
-        onTextChunk(chunk.content);
-      }
-    } else if (chunk.type === "tool_call") {
-      isToolCall = true;
-      if (chunk.toolName) toolName = chunk.toolName;
-      toolArgsBuffer += chunk.toolArgs;
-    }
+  if (!choice) {
+    return { intent: "chat", data: { reply: "收到！还有其他需要帮忙的吗？" } };
   }
 
-  if (isToolCall && toolName) {
-    // Tool call: discard any text, return structured response
-    return parseToolCallToResponse(toolName, toolArgsBuffer);
+  // Tool call → structured response (no text wasted)
+  if (choice.message?.tool_calls && choice.message.tool_calls.length > 0) {
+    const tc = choice.message.tool_calls[0];
+    return parseToolCallToResponse(tc.function.name, tc.function.arguments);
   }
 
-  // Strip leaked metadata (model sometimes outputs chatTitle in plain text)
-  const cleanText = fullText.replace(/\n*chatTitle[：:]\s*.+$/i, '').trim();
+  // Chat response → simulate typewriter effect
+  const rawText = choice.message?.content || "收到！还有其他需要帮忙的吗？";
+  const cleanText = rawText.replace(/\n*chatTitle[：:]\s*.+$/i, '').trim();
 
-  // If text was buffered (tools were present but model chose chat), flush it now
-  if (hasTools && cleanText) {
-    onTextChunk(cleanText);
+  // Client-side typewriter: reveal text progressively
+  const chunkSize = 2; // characters per tick
+  for (let i = 0; i < cleanText.length; i += chunkSize) {
+    if (abortSignal?.aborted) break;
+    onTextChunk(cleanText.slice(i, i + chunkSize));
+    await new Promise(r => setTimeout(r, 15));
   }
 
-  // Empty response fallback
-  return { intent: "chat", data: { reply: cleanText || "收到！还有其他需要帮忙的吗？" } };
+  return { intent: "chat", data: { reply: cleanText } };
 }
 
 // ─── Report Generation (Report Agent) ────────────────────────────────────────
