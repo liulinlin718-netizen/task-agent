@@ -31,6 +31,7 @@ export async function callChatCompletion(params: {
   stream?: boolean;
   signal?: AbortSignal;
   jsonMode?: boolean;
+  timeoutMs?: number;
 }): Promise<Response> {
   const url = `${params.baseUrl.replace(/\/$/, "")}/chat/completions`;
 
@@ -42,7 +43,8 @@ export async function callChatCompletion(params: {
   if (params.jsonMode) body.response_format = { type: "json_object" };
 
   // Combine user abort signal with timeout signal
-  const timeoutSignal = AbortSignal.timeout(REQUEST_TIMEOUT_MS);
+  const timeoutMs = params.timeoutMs || REQUEST_TIMEOUT_MS;
+  const timeoutSignal = AbortSignal.timeout(timeoutMs);
   const combinedSignal = params.signal
     ? AbortSignal.any([params.signal, timeoutSignal])
     : timeoutSignal;
@@ -400,6 +402,7 @@ export async function generateCustomSummary(
       { role: "system", content: systemInstruction },
       { role: "user", content: "请为我生成这份总结报告。" },
     ],
+    timeoutMs: 60000, // Report generation needs more time (60s)
   });
 
   const data = await res.json();

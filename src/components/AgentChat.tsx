@@ -234,8 +234,8 @@ export function AgentChat() {
           }
           const report = await generateCustomSummary(dates, state);
           addChatMessage("model", report);
-        } catch {
-          addChatMessage("model", "报告生成失败，请检查 API 配置。");
+        } catch (reportErr: any) {
+          addChatMessage("model", `报告生成失败：${reportErr.message || '请检查 API 配置。'}`);
         }
       } else if (res.intent === "decompose" && res.data.proposedTasks && res.data.proposedTasks.length > 0) {
         const task = state.tasks.find(t => t.id === res.data.taskId);
