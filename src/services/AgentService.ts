@@ -312,8 +312,8 @@ function buildSystemPrompt(state: AppState, ruleHint: string | null): string {
     return [persona, mod_task_context(state), chatContext].filter(Boolean).join("\n\n");
   }
 
-  // Chat / unknown intent: full prompt
-  return [persona, mod_chat_instruction(), mod_task_context(state), mod_profile_context(state), chatContext].filter(Boolean).join("\n\n");
+  // Chat / unknown intent: no task context (saves tokens, avoids unnecessary task reading)
+  return [persona, mod_chat_instruction(), mod_profile_context(state), chatContext].filter(Boolean).join("\n\n");
 }
 
 function getToolsForRequest(ruleHint: string | null): any[] {
