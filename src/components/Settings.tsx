@@ -7,6 +7,7 @@ export function Settings() {
   const hourRef = useRef<HTMLInputElement>(null);
   const minRef = useRef<HTMLInputElement>(null);
   const [showReportConfig, setShowReportConfig] = useState(false);
+  const [pwDialog, setPwDialog] = useState<{ mode: 'export' | 'import'; pw: string } | null>(null);
 
   useEffect(() => {
     const preventScroll = (e: WheelEvent) => e.preventDefault();
@@ -341,35 +342,64 @@ export function Settings() {
             </button>
           </div>
 
-          <div className="flex items-center gap-3 pt-4 border-t border-gray-100 dark:border-neutral-800">
-            <button
-              onClick={async () => {
-                const pw = prompt('请设置导出密码（用于加密备份文件）：');
-                if (!pw) return;
-                const ok = await (window as any).electronAPI?.dataExport?.(pw);
-                if (ok) alert('导出成功！');
-                else if (ok === false) alert('导出失败。');
-              }}
-              className="px-4 py-2 bg-blue-50 dark:bg-blue-900/20 text-blue-600 dark:text-blue-400 border border-blue-200 dark:border-blue-900/50 rounded-xl hover:bg-blue-100 dark:hover:bg-blue-900/40 transition-colors shadow-sm text-sm font-medium"
-            >
-              📤 导出数据
-            </button>
-            <button
-              onClick={async () => {
-                const pw = prompt('请输入导入密码：');
-                if (!pw) return;
-                const result = await (window as any).electronAPI?.dataImport?.(pw);
-                if (result === '__ERROR__') {
-                  alert('导入失败：密码错误或文件损坏。');
-                } else if (result) {
-                  setState(JSON.parse(result));
-                  alert('导入成功！数据已恢复。');
-                }
-              }}
-              className="px-4 py-2 bg-green-50 dark:bg-green-900/20 text-green-600 dark:text-green-400 border border-green-200 dark:border-green-900/50 rounded-xl hover:bg-green-100 dark:hover:bg-green-900/40 transition-colors shadow-sm text-sm font-medium"
-            >
-              📥 导入数据
-            </button>
+          <div className="flex flex-col gap-3 pt-4 border-t border-gray-100 dark:border-neutral-800">
+            <div className="flex items-center gap-3">
+              <button
+                onClick={() => setPwDialog({ mode: 'export', pw: '' })}
+                className="px-4 py-2 bg-blue-50 dark:bg-blue-900/20 text-blue-600 dark:text-blue-400 border border-blue-200 dark:border-blue-900/50 rounded-xl hover:bg-blue-100 dark:hover:bg-blue-900/40 transition-colors shadow-sm text-sm font-medium"
+              >
+                📤 导出数据
+              </button>
+              <button
+                onClick={() => setPwDialog({ mode: 'import', pw: '' })}
+                className="px-4 py-2 bg-green-50 dark:bg-green-900/20 text-green-600 dark:text-green-400 border border-green-200 dark:border-green-900/50 rounded-xl hover:bg-green-100 dark:hover:bg-green-900/40 transition-colors shadow-sm text-sm font-medium"
+              >
+                📥 导入数据
+              </button>
+            </div>
+
+            {pwDialog && (
+              <div className="flex items-center gap-2 p-3 rounded-xl bg-gray-50 dark:bg-neutral-800 border border-gray-200 dark:border-neutral-700">
+                <input
+                  autoFocus
+                  type="password"
+                  placeholder={pwDialog.mode === 'export' ? '设置导出密码...' : '输入导入密码...'}
+                  value={pwDialog.pw}
+                  onChange={e => setPwDialog({ ...pwDialog, pw: e.target.value })}
+                  onKeyDown={e => { if (e.key === 'Escape') setPwDialog(null); }}
+                  className="flex-1 px-3 py-1.5 text-sm rounded-lg border border-gray-200 dark:border-neutral-600 bg-white dark:bg-neutral-900 text-foreground outline-none focus:ring-2 focus:ring-blue-200 dark:focus:ring-blue-900/50"
+                />
+                <button
+                  disabled={!pwDialog.pw}
+                  onClick={async () => {
+                    const { mode, pw } = pwDialog;
+                    setPwDialog(null);
+                    if (mode === 'export') {
+                      const ok = await (window as any).electronAPI?.dataExport?.(pw);
+                      if (ok) alert('导出成功！');
+                      else if (ok === false) alert('导出失败。');
+                    } else {
+                      const result = await (window as any).electronAPI?.dataImport?.(pw);
+                      if (result === '__ERROR__') {
+                        alert('导入失败：密码错误或文件损坏。');
+                      } else if (result) {
+                        setState(JSON.parse(result));
+                        alert('导入成功！数据已恢复。');
+                      }
+                    }
+                  }}
+                  className="px-3 py-1.5 text-sm rounded-lg bg-blue-500 text-white hover:bg-blue-600 disabled:opacity-40 transition-colors font-medium"
+                >
+                  确认
+                </button>
+                <button
+                  onClick={() => setPwDialog(null)}
+                  className="px-3 py-1.5 text-sm rounded-lg text-gray-500 hover:text-gray-700 dark:hover:text-gray-300 transition-colors"
+                >
+                  取消
+                </button>
+              </div>
+            )}
           </div>
         </div>
       </div>
