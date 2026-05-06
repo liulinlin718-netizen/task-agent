@@ -102,13 +102,11 @@ function TaskCenterContent() {
   // --- Edge hover ---
   const handleEdgeHover = () => {
     if (snappedEdge) {
-      setIsHovering(true);
-      // Delay the window bounds resize slightly to allow React to paint the
-      // transparent initial state of the full panel. This prevents the blue
-      // strip from visually jumping across the screen due to OS texture anchoring.
-      setTimeout(() => {
-        window.electronAPI?.taskCenterExpandFromEdge(snappedEdge, panelSize.w, panelSize.h);
-      }, 50);
+      // Expand window first, then switch content.
+      // Left edge: x stays 0, no visual jump. Right edge: x shifts, needs delay
+      // to let setBounds complete before React re-renders panel content.
+      window.electronAPI?.taskCenterExpandFromEdge(snappedEdge, panelSize.w, panelSize.h);
+      setTimeout(() => setIsHovering(true), 30);
     }
   };
 
