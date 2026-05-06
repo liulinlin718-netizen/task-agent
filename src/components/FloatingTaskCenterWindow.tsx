@@ -102,8 +102,9 @@ function TaskCenterContent() {
   // --- Edge hover ---
   const handleEdgeHover = () => {
     if (snappedEdge) {
-      setIsHovering(true);
+      // Expand window first, then show panel — allows strip to visually "push out"
       window.electronAPI?.taskCenterExpandFromEdge(snappedEdge, panelSize.w, panelSize.h);
+      setTimeout(() => setIsHovering(true), 100);
     }
   };
 
