@@ -102,11 +102,8 @@ function TaskCenterContent() {
   // --- Edge hover ---
   const handleEdgeHover = () => {
     if (snappedEdge) {
-      // Expand window first, then switch content.
-      // Left edge: x stays 0, no visual jump. Right edge: x shifts, needs delay
-      // to let setBounds complete before React re-renders panel content.
+      setIsHovering(true);
       window.electronAPI?.taskCenterExpandFromEdge(snappedEdge, panelSize.w, panelSize.h);
-      setTimeout(() => setIsHovering(true), 30);
     }
   };
 

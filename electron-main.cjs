@@ -138,11 +138,12 @@ function decryptData(obj, password) {
 }
 
 // ─── Data Export/Import IPC ────────────────────────────────────────────────────
-ipcMain.handle('data:export', async (_event, password) => {
+ipcMain.handle('data:export', async (event, password) => {
   try {
+    const win = BrowserWindow.fromWebContents(event.sender) || mainWindow;
     const data = fs.readFileSync(STORE_FILE, 'utf-8');
     const encrypted = encryptData(data, password);
-    const { filePath } = await dialog.showSaveDialog({
+    const { filePath } = await dialog.showSaveDialog(win, {
       defaultPath: `taskagent-backup-${new Date().toISOString().slice(0, 10)}.taskagent`,
       filters: [{ name: 'TaskAgent Backup', extensions: ['taskagent'] }],
     });
@@ -152,9 +153,10 @@ ipcMain.handle('data:export', async (_event, password) => {
   } catch { return false; }
 });
 
-ipcMain.handle('data:import', async (_event, password) => {
+ipcMain.handle('data:import', async (event, password) => {
   try {
-    const { filePaths } = await dialog.showOpenDialog({
+    const win = BrowserWindow.fromWebContents(event.sender) || mainWindow;
+    const { filePaths } = await dialog.showOpenDialog(win, {
       filters: [{ name: 'TaskAgent Backup', extensions: ['taskagent'] }],
       properties: ['openFile'],
     });
