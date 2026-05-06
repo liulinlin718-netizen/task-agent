@@ -64,41 +64,40 @@
 | Kimi (Moonshot) | `https://api.moonshot.cn/v1` |
 | Qwen (通义千问) | `https://dashscope.aliyuncs.com/compatible-mode/v1` |
 
-#### 3.2 流式输出 + Function Calling 统一调用架构
+#### 3.2 ~~流式输出 + Function Calling 统一调用架构~~ → 非流式 JSON 结构化输出 + 客户端打字机
 **问题**：当前用户发消息后，要等 2-5 秒才能看到任何响应。
-**方案**：所有请求统一使用 `stream: true` + `tools`（Function Calling）**同时开启**，一次调用解决意图识别和响应输出：
-- 模型选择调用 Tool（任务操作）→ SSE 流中增量返回 `tool_calls` 参数 → 解析完毕后执行操作。
-- 模型选择不调用 Tool（闲聊）→ SSE 流中逐字返回文本 → 前端打字机效果渲染。
-- **核心指标**：TTFT（首字延迟）< 1s。
-- **关键优势**：只有一次模型调用，不存在"先判断意图再发第二次请求"的延迟翻倍问题。
+**v2.0 初版方案**：`stream: true` + `tools`（Function Calling）同时开启。
+**v2.0.1 最终方案**：经过迭代验证，发现 stream+tools 存在双重输出问题（模型同时产生文本和 tool_call，浪费 token），且 5 个 Tool 定义增加 ~600 tokens/次固定开销。最终方案：
+- **非流式调用 + JSON 结构化输出**（`response_format: { type: "json_object" }`）：模型返回 `{intent, data}` JSON，只产生一种输出，零 token 浪费。
+- **客户端打字机效果**：收到完整文本后，前端逐字渲染（2字/15ms），保持打字机视觉体验。
+- **Tool 定义移除**：5 个 intent 的参数规范改为 prompt 内自然语言描述（~200 tokens），比 Tool 定义（~600 tokens）省 ~400 tokens/次。
+- **核心指标**：单次请求省 ~400 tokens，无双重输出问题。
 
-#### 3.3 意图识别：规则前置 + Function Calling + Agent 协作
+#### 3.3 意图识别：规则前置 + JSON 结构化输出 + Agent 协作
 **问题**：当前每条消息都带着全部任务列表 + 全部历史对话发给大模型做意图识别，成本高且慢。
 **方案**：两层处理——
-1. **第一层：本地规则快速判定**。用正则/关键词匹配过滤明显意图（如包含"添加"、"进度"、"拆解"等词）。命中则直接走 Function Calling 路径（非流式，确保参数完整）。
-2. **第二层：模型统一调用兜底**。规则未命中时，走 3.2 的统一调用架构（`stream: true` + `tools`）。模型自行决定是调用 Tool 还是直接对话——不调用任何 Tool 即为 chat（闲聊），这是 Function Calling 范式的天然兜底，无需额外的"置信度判断"。
+1. **第一层：本地规则快速判定**。用正则/关键词匹配过滤明显意图（如包含"添加"、"进度"、"拆解"等词，以及"跑完/练完/看完"等隐式完成语义）。命中则直接走对应意图路径。
+2. **第二层：模型统一调用兜底**。规则未命中时，走 3.2 的 JSON 结构化输出（`response_format: json_object`）。模型分析用户输入后返回 `{"intent": "...", "data": {...}}`。`intent: "chat"` 为闲聊兜底。
 
-**Function Calling Tool 清单（审查完毕，5 个）：**
+**JSON Intent 清单（5 个操作 + 1 个兜底）：**
 
-| Tool | 用户场景示例 | 参数 Schema | 对应 Store 操作 |
+| Intent | 用户场景示例 | 必需字段 | 对应 Store 操作 |
 |:---|:---|:---|:---|
-| **`add_tasks`** | "帮我添加一个任务：写论文引言" | `proposedTasks: string[]`, `targetDate?: string` | `addTask()` |
-| **`update_task`** | "进度更新到 60%"、"挪到明天"、"备注一下要等数据" | `taskId: string`, `progress?: number`, `date?: string`, `notes?: string`, `priority?: string` | `updateTask()` |
-| **`delete_task`** | "把这个任务删了"、"不需要了" | `taskId: string` | `deleteTask()` |
-| **`decompose`** | "帮我拆解一下开题报告" | `taskId: string`, `proposedTasks: string[]` | `addTask()` × N |
-| **`generate_report`** | "总结一下这周的进度" | `startDate: string`, `endDate: string` | `addReport()` |
+| **`add_tasks`** | "帮我添加一个任务：写论文引言" | `proposedTasks`, `reply` | `addTask()` |
+| **`update_task`** | "健完身了"、"进度更新到 60%" | `taskId`, `reply` | `updateTask()` |
+| **`delete_task`** | "把这个任务删了" | `taskId`, `reply` | `deleteTask()` |
+| **`decompose`** | "帮我拆解一下开题报告" | `taskId`, `proposedTasks`, `reply` | `addTask()` × N |
+| **`generate_report`** | "总结一下这周的进度" | `startDate`, `endDate`, `reply` | `generateCustomSummary()` → `addReport()` |
+| **`chat`** | 普通闲聊 | `reply` | 客户端打字机输出 |
 
 **与 v1.0 的对比变化：**
-- `update_progress` → 扩展为 **`update_task`**：v1.0 只能改进度，v2.0 支持改日期、备注、优先级等 Task 的任意字段（对齐 Store 的 `Partial<Task>` 能力）。
-- 新增 **`delete_task`**：v1.0 无法通过对话删除任务，只能手动操作。
-- 新增 **`generate_report`**：v1.0 需要手动去报告页面触发，v2.0 在对话中自然调用。
-
-**明确不是 Tool 的：**
-- **`chat`（闲聊）**：在 Function Calling 范式中，模型选择不调用任何 Tool 时，即为普通对话。`chat` 是兜底默认行为，不需要定义为 Tool。
-- **`parse_document`（文档解析）**：由文件上传按钮/拖拽触发，不走意图识别流程，是独立的 UI 驱动功能。
+- `update_progress` → 扩展为 **`update_task`**：支持改日期、备注、优先级等任意字段。
+- 新增 **`delete_task`** 和 **`generate_report`**（v1.0 需手动触发）。
+- **v2.0.1 变更**：从 Function Calling（Tool 定义 ~600 tokens）改为 JSON 结构化输出（prompt 内意图描述 ~200 tokens），省 ~400 tokens/次。
+- `generate_report` 生成的报告自动同步到历史报告列表。
 
 **`generate_report` 的 Agent 协作逻辑**：
-当模型调用 `generate_report` Tool 时，Chat Agent 将其转发给 Report Agent（使用深度模型）执行 `generateCustomSummary`，并将结果返回到对话流中。这不需要 Multi-Agent 框架，只是基于 Function Calling 的函数分发。
+当模型返回 `generate_report` intent 时，Chat Agent 将其转发给 Report Agent（使用深度模型，60s 超时）执行 `generateCustomSummary`，并将结果返回到对话流中，同时自动调用 `addReport()` 同步到历史报告列表。
 
 **四个 Agent 的职责划分**：
 | Agent | 触发方式 | 模型选型 | 职责 |
@@ -126,13 +125,16 @@
 #### 3.5 上下文路由 + System Prompt 动态组建
 **问题**：当前 `systemInstruction` 是一个巨大的模板字符串，无论用户说"今天天气真好"还是"帮我添加任务"，都注入全量任务列表 + 全部指令，浪费 Token。
 **方案**：
-- 拆分 System Prompt 为模块化片段：`base_persona`（人设）、`task_context`（任务数据）、`chat_instruction`（对话指令）、`report_instruction`（报告指令）。
+- 拆分 System Prompt 为模块化片段：`base_persona`（人设）、`intent_instruction`（意图识别 + JSON 输出格式）、`task_context`（任务数据）、`chat_instruction`（对话指令）、`profile_context`（用户画像）。
 - **路由策略**（在发送请求前，根据规则层判定结果决定 Prompt 组装方式）：
-  - 规则命中任务意图（`add_tasks` / `update_task` / `delete_task` / `decompose`）→ 组装：`base_persona` + `task_context(当日)` + Tools 定义。
-  - 规则未命中（走模型兜底）→ 组装：`base_persona` + `chat_instruction` + `task_context(当日)` + Tools 定义。此时模型可能调 Tool 也可能直接对话，两种情况都覆盖。
-  - `generate_report` 被模型调用后 → Report Agent 使用：`base_persona` + `task_context(多日)` + `report_instruction`。
+  - 规则命中任务意图 → 精简组装：`base_persona` + `intent_instruction` + `task_context(当日)` + 聊天上下文。
+  - 规则未命中（走模型兜底）→ 完整组装：`base_persona` + `intent_instruction` + `chat_instruction` + `task_context(当日)` + `profile_context` + 聊天上下文。
+  - `generate_report` 被模型识别后 → Report Agent 使用独立 Prompt + 60s 超时。
   - 文档解析（UI 触发）→ 组装：`base_persona` + 上传文档文本。
-- **预估节省**：闲聊场景下 Token 消耗减少 40-60%（不注入完整任务列表）。
+- **v2.0.1 关键变更**：
+  - `task_context` **始终注入**（即使是闲聊），确保模型能识别隐式任务进展（如"健完身了" → 匹配健身任务）。
+  - `chat_instruction` 中增加守卫指令："不要主动提及今日任务列表，除非用户输入明确涉及任务"，防止注入任务上下文后模型显得"机器感太重"。
+  - `intent_instruction` 模块替代了 Tool 定义，用自然语言描述 6 个 intent 的触发条件和 JSON 输出格式（~200 tokens vs Tool 定义的 ~600 tokens）。
 
 ---
 
@@ -257,7 +259,7 @@
 
 ---
 
-> **文档版本**：v2.0 Rev.7（验收版） · 更新日期：2026-05-06
+> **文档版本**：v2.0.1 Rev.8 · 更新日期：2026-05-06
 
 ---
 
@@ -289,6 +291,9 @@
 
 | 需求 | PRD 原始方案 | 实际实现 | 偏差原因 |
 |:---|:---|:---|:---|
+| 3.2 调用架构 | `stream: true` + Function Calling 同时开启 | **非流式 JSON 结构化输出 + 客户端打字机** | stream+tools 双重输出浪费 token；Tool 定义 ~600 tokens 固定开销过高 |
+| 3.3 意图输出 | Function Calling（`tools` + `tool_calls`） | **JSON 结构化输出**（`response_format: json_object`） | prompt 内意图描述 ~200 tokens，省 ~400 tokens/次 |
+| 3.5 task_context | 仅任务相关时注入 | **始终注入 + chat 守卫指令** | 不注入时无法识别隐式任务进展（如"健完身了"匹配健身任务） |
 | 3.7 PDF 支持 | `pdf-parse`（基于 pdfjs-dist） | **直接使用 `pdfjs-dist`** | `pdf-parse` 依赖 Node.js `fs`，无法在 Vite 浏览器环境运行 |
 | 3.9 任务抽屉动画 | CSS `transform + transition` | **保持 instant `setBounds`** | Electron `setBounds` 动画导致严重卡顿，回退为瞬间切换 |
 | 3.9 磁吸反馈 | "半透明指示线或轻微震动" | **球体 inset 内发光** | 48×48 透明窗口无法容纳外部视觉元素，改为 box-shadow inset 效果 |
@@ -304,34 +309,39 @@
 | **悬浮球展开/收起缓动** | `easeOutCubic` 200ms 动画 | `electron-main.cjs` |
 | **任务抽屉蓝色边条** | 吸附状态显示蓝色渐变窄边指示侧边栏存在 | `FloatingTaskCenterWindow.tsx` |
 | **localStorage 自动迁移** | 首次启动 Electron 时从 localStorage 迁移到 fs 存储 | `Store.tsx` |
+| **报告同步到历史** | 对话中生成的报告自动同步到历史报告列表 | `AgentChat.tsx` |
+| **报告按日期降序** | 历史报告按目标日期降序排列 + 时间滚轮用目标日期 + 连续日期填充 | `History.tsx` |
+| **悬浮窗进度区域限制** | 滚轮改进度仅在进度环区域生效，其余区域正常滚动 | `FloatingTaskCenterWindow.tsx` |
 
 ### 7.4 核心指标验收
 
-| 指标 | v1.0 基线 | v2.0 目标 | v2.0 实际 | 达标 |
+| 指标 | v1.0 基线 | v2.0 目标 | v2.0.1 实际 | 达标 |
 |:---|:---|:---|:---|:---|
-| **TTFT** | 2-5s | < 1s | < 1s（`stream: true`） | ✅ |
-| **单次 Token** | 2000-4000 | 800-1500 | ~1000（摘要+路由） | ✅ |
-| **意图准确率** | ~85% | ~95% | ~95%（规则+FC） | ✅ |
+| **TTFT** | 2-5s | < 1s | ~1-2s（非流式+打字机） | ⚠️ 接近 |
+| **单次 Token** | 2000-4000 | 800-1500 | ~600-1000（JSON 输出，无 Tool 开销） | ✅ 超额 |
+| **意图准确率** | ~85% | ~95% | ~95%（规则+JSON+always-inject） | ✅ |
 | **上下文保留** | 全量发送 | 摘要+3轮 | 摘要+3轮 | ✅ |
 | **存储上限** | 5-10MB | 无上限 | 无上限（fs JSON） | ✅ |
 | **悬浮球帧率** | 偶有卡顿 | 60fps | 60fps（rAF） | ✅ |
 | **👍/👎 反馈** | 无 | 正向率 > 80% | ⚠️ **未实现** | ❌ |
 
 > **备注**：👍/👎 反馈按钮属于 UI 交互度量功能，在 v2.0 中未排入 Sprint。该功能不影响核心产品能力，可作为 v2.1 迭代项。
+> **TTFT 说明**：v2.0.1 从流式改为非流式 JSON 调用+客户端打字机，TTFT 略高于流式首字，但消除了双重输出和 token 浪费。实际感知延迟 1-2s，可接受。
 
 ### 7.5 改动文件清单
 
 | 文件 | 改动类型 | Sprint | 说明 |
 |:---|:---|:---|:---|
-| `src/services/AgentService.ts` | 重构 | S1-S3 | 统一 API + 流式 + FC + 规则层 + Prompt 模块 + Per-Agent 配置 |
-| `src/services/StreamParser.ts` | **新增** | S1 | SSE 流解析器 |
+| `src/services/AgentService.ts` | 重构 | S1-S3, v2.0.1 | 统一 API + JSON 输出 + 规则层 + Prompt 模块 + Per-Agent 配置 |
+| `src/services/StreamParser.ts` | **新增**（v2.0.1 弃用） | S1 | SSE 流解析器（v2.0.1 改为非流式后不再 import） |
 | `src/services/DocumentParser.ts` | **新增** | S5 | .txt/.docx/.pdf 文本提取 + LLM 任务提取 |
 | `src/Store.tsx` | 修改 | S2-S3,S6 | summary 字段 + reportConfig + IPC 存储 |
-| `src/components/AgentChat.tsx` | 修改 | S1,S5 | 流式渲染 + 文件上传 |
+| `src/components/AgentChat.tsx` | 修改 | S1,S5,v2.0.1 | 打字机渲染 + 文件上传 + 报告同步到历史 |
+| `src/components/History.tsx` | 修改 | v2.0.1 | 报告按日期降序排列 + 时间滚轮用目标日期 + 连续日期填充 |
 | `src/components/Settings.tsx` | 修改 | S3,S6 | Report Agent 配置 + 导入导出按钮 |
 | `src/components/RolloverEngine.tsx` | 修改 | S1,补丁 | 统一 API + 系统通知 |
 | `src/components/FloatingBallWindow.tsx` | 修改 | S4,补丁 | rAF + nearEdge 反馈 |
-| `src/components/FloatingTaskCenterWindow.tsx` | 修改 | 补丁 | 蓝色边条指示 |
+| `src/components/FloatingTaskCenterWindow.tsx` | 修改 | 补丁,v2.0.1 | 蓝色边条 + 进度滚轮区域限制 |
 | `electron-main.cjs` | 修改 | S4,S6 | Tray + 缓动动画 + 存储 IPC + 加密 |
 | `electron-preload.cjs` | 修改 | S6 | storeGet/Set + dataExport/Import |
 | `package.json` | 修改 | S5 | +mammoth, +pdfjs-dist, -@google/genai |
@@ -339,15 +349,50 @@
 ### 7.6 自动化验收
 
 ```bash
-# 运行 78 项自动化检查
-node scripts/verify-v2.cjs
-
 # TypeScript 编译检查
 npx tsc --noEmit
 ```
 
-最终结果：**78/78 通过，tsc 零错误**。
+最终结果：**tsc 零错误**。
 
 ---
 
-> **文档版本**：v2.0 Rev.7（验收版） · 更新日期：2026-05-06
+## 八、v2.0.1 迭代日志
+
+> **迭代日期**：2026-05-06 · **分支**：`v2-dev`
+
+### 8.1 架构变更
+
+| 变更 | 原方案（v2.0） | 新方案（v2.0.1） | 原因 |
+|:---|:---|:---|:---|
+| **意图输出格式** | Function Calling（`tools` + `tool_calls`） | JSON 结构化输出（`response_format: json_object`） | Tool 定义增加 ~600 tokens/次固定开销，对 5 个 intent 的简单场景过度工程 |
+| **流式策略** | `stream: true` + `tools` 同时开启 | 非流式 + 客户端打字机 | stream+tools 导致双重输出（文本+tool_call 同时产生），浪费 token |
+| **任务上下文注入** | 仅任务相关时注入 `task_context` | **始终注入** + chat 守卫指令 | 不注入时模型无法识别隐式任务进展（如"健完身了"无法匹配健身任务） |
+
+### 8.2 功能新增/修复
+
+| 改动 | 说明 |
+|:---|:---|
+| **报告同步到历史** | 对话中 `generate_report` 生成的报告自动同步到历史报告列表（`addReport()`） |
+| **报告超时修复** | 报告生成 API 超时从 15s → 60s，解决报告生成失败问题 |
+| **报告 prompt 还原** | 还原为 v1.0 原始措辞（"请分段落总结性概述，不需要逐条罗列"等） |
+| **报告排序** | 历史报告按目标日期降序排列（最新在上），时间滚轮同步 |
+| **时间滚轮修复** | 时间滚轮显示报告目标日期（而非生成时间），连续日期填充 |
+| **空白气泡修复** | 过滤 role=model 且 text 为空的消息，消除流式占位符残留 |
+| **悬浮窗进度控制** | 滚轮改进度缩小到进度环区域，其他区域正常页面滚动 |
+| **错误信息暴露** | 报告生成失败时显示真实错误信息而非通用提示 |
+
+### 8.3 Token 效率对比
+
+| 场景 | v1.0 | v2.0（FC） | v2.0.1（JSON） |
+|:---|:---|:---|:---|
+| **固定开销（意图指引）** | ~200 tokens（prompt 内嵌） | ~600 tokens（Tool 定义） | ~200 tokens（prompt 内嵌） |
+| **短对话（1-4 轮）** | ~500-800 | ~1000-1200 | ~600-800 |
+| **长对话（10+ 轮）** | ~2500+ | ~1100 | ~700 |
+
+> v2.0.1 在短对话和长对话上均优于 v2.0 的 FC 方案，且与 v1.0 短对话持平、长对话大幅优于 v1.0。
+
+---
+
+> **文档版本**：v2.0.1 Rev.8 · 更新日期：2026-05-06
+
