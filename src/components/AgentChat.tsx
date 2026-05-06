@@ -7,7 +7,7 @@ import { motion, AnimatePresence } from "motion/react";
 import Markdown from "react-markdown";
 
 export function AgentChat() {
-  const { state, addTask, updateTask, deleteTask, addChatMessage, updateChatMessage, appendChatMessageText, deleteChatMessage, acceptProposedTask, acceptAllProposedTasks, dismissProposedTasks, updateMessageProposedTasks, setActiveDate, setState, createNewChat, setActiveChatSession, deleteChatSession, updateChatSessionTitle } = useStore();
+  const { state, addTask, updateTask, deleteTask, addChatMessage, updateChatMessage, appendChatMessageText, deleteChatMessage, acceptProposedTask, acceptAllProposedTasks, dismissProposedTasks, updateMessageProposedTasks, setActiveDate, setState, createNewChat, setActiveChatSession, deleteChatSession, updateChatSessionTitle, addReport } = useStore();
   const [input, setInput] = useState("");
   const [isTyping, setIsTyping] = useState(false);
   const [showHistory, setShowHistory] = useState(false);
@@ -234,6 +234,8 @@ export function AgentChat() {
           }
           const report = await generateCustomSummary(dates, state);
           addChatMessage("model", report);
+          // Sync to history reports
+          addReport(`${res.data.startDate} ~ ${res.data.endDate} 报告`, dates, report);
         } catch (reportErr: any) {
           addChatMessage("model", `报告生成失败：${reportErr.message || '请检查 API 配置。'}`);
         }
