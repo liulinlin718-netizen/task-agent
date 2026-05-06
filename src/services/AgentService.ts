@@ -254,7 +254,11 @@ function parseJsonResponse(text: string): AgentResponse {
     // Validate intent
     const validIntents = ['add_tasks', 'update_task', 'delete_task', 'decompose', 'generate_report', 'chat'];
     if (!validIntents.includes(parsed.intent)) {
-      return { intent: 'chat', data: { reply: parsed.data?.reply || text } };
+      return { intent: 'chat', data: { reply: parsed.data?.reply || text || '收到！还有其他需要帮忙的吗？' } };
+    }
+    // Ensure reply is never empty for chat intent
+    if (parsed.intent === 'chat' && !parsed.data?.reply) {
+      return { intent: 'chat', data: { ...parsed.data, reply: '收到！还有其他需要帮忙的吗？' } };
     }
     return { intent: parsed.intent, data: parsed.data || {} };
   } catch {
@@ -335,9 +339,9 @@ export async function processAgentRequestStream(
   const content = choice?.message?.content || '';
   const parsed = parseJsonResponse(content);
 
-  // Chat response → simulate typewriter effect
-  if (parsed.intent === 'chat' && parsed.data.reply) {
-    const replyText = parsed.data.reply;
+  // Typewriter effect for reply text (all intents that have a reply)
+  const replyText = parsed.data.reply;
+  if (replyText) {
     const chunkSize = 2;
     for (let i = 0; i < replyText.length; i += chunkSize) {
       if (abortSignal?.aborted) break;

@@ -188,42 +188,43 @@ export function AgentChat() {
       );
 
       if (res.intent === "chat") {
-        // Text was already streamed — nothing more to do
+        // Reply was already typewriter-rendered into the placeholder message
       } else if (res.intent === "add_tasks" && res.data.proposedTasks && res.data.proposedTasks.length > 0) {
-        let replyText = res.data.reply || "好的，为你生成了以下规划，请确认是否并入任务表：";
         const firstTaskName = res.data.proposedTasks[0];
         const targetDate = res.data.targetDate || state.activeDate;
         addTask(firstTaskName, targetDate);
-        addChatMessage("model", replyText, res.data.proposedTasks, res.data.targetDate);
+        // Update the placeholder message to include proposedTasks for confirmation UI
+        const msgs = state.chatSessions.find(cs => cs.id === state.activeChatSessionId)?.messages || [];
+        const lastMsg = msgs[msgs.length - 1];
+        if (lastMsg && lastMsg.role === 'model') {
+          updateMessageProposedTasks(lastMsg.id, res.data.proposedTasks);
+        }
         if (res.data.targetDate && res.data.targetDate !== state.activeDate) {
           setActiveDate(res.data.targetDate);
         }
       } else if (res.intent === "update_task" && res.data.taskId) {
-        // FC parameter validation: check taskId exists
         const task = state.tasks.find(t => t.id === res.data.taskId);
         if (!task) {
-          addChatMessage("model", "未找到对应的任务，请确认任务名称后重试。");
+          // Reply already shown via typewriter; no action needed
         } else {
           const updates: any = {};
           if (res.data.progress !== undefined) {
-            updates.progress = Math.max(0, Math.min(100, res.data.progress)); // Clamp 0-100
+            updates.progress = Math.max(0, Math.min(100, res.data.progress));
           }
           if (res.data.date) updates.date = res.data.date;
           if (res.data.notes) updates.notes = res.data.notes;
           if (res.data.priority) updates.priority = res.data.priority;
           updateTask(res.data.taskId, updates);
-          addChatMessage("model", res.data.reply || `已更新 **${task.name}**。`);
+          // Reply already shown via typewriter
         }
       } else if (res.intent === "delete_task" && res.data.taskId) {
         const task = state.tasks.find(t => t.id === res.data.taskId);
-        if (!task) {
-          addChatMessage("model", "未找到对应的任务，可能已被删除。");
-        } else {
+        if (task) {
           deleteTask(res.data.taskId);
-          addChatMessage("model", res.data.reply || `已删除任务：**${task.name}**。`);
         }
+        // Reply already shown via typewriter
       } else if (res.intent === "generate_report" && res.data.startDate && res.data.endDate) {
-        addChatMessage("model", "正在生成报告，请稍候...");
+        // Reply already shown via typewriter (e.g. "正在为你生成报告...")
         try {
           const dates: string[] = [];
           let d = new Date(res.data.startDate);
@@ -234,17 +235,19 @@ export function AgentChat() {
           }
           const report = await generateCustomSummary(dates, state);
           addChatMessage("model", report);
-          // Sync to history reports
           addReport(`${res.data.startDate} ~ ${res.data.endDate} 报告`, dates, report);
         } catch (reportErr: any) {
           addChatMessage("model", `报告生成失败：${reportErr.message || '请检查 API 配置。'}`);
         }
       } else if (res.intent === "decompose" && res.data.proposedTasks && res.data.proposedTasks.length > 0) {
         const task = state.tasks.find(t => t.id === res.data.taskId);
-        if (!task) {
-          addChatMessage("model", "未找到要拆解的任务。");
-        } else {
-          addChatMessage("model", res.data.reply || `这是 **${task.name}** 的拆解步骤：`, res.data.proposedTasks);
+        if (task) {
+          // Update the placeholder message to include proposedTasks
+          const msgs = state.chatSessions.find(cs => cs.id === state.activeChatSessionId)?.messages || [];
+          const lastMsg = msgs[msgs.length - 1];
+          if (lastMsg && lastMsg.role === 'model') {
+            updateMessageProposedTasks(lastMsg.id, res.data.proposedTasks);
+          }
         }
       }
 
