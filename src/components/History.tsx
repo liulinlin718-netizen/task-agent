@@ -74,13 +74,14 @@ export function History() {
   }, [allDates, viewMode]);
 
   // Build continuous date nav items for reports (based on report target dates, not creation time)
+  // Sorted descending (newest first) to match report list order
   const reportNavItems = useMemo(() => {
     const reports = state.reports || [];
     if (reports.length === 0) return [];
     // Collect all first-dates from report target ranges
     const reportDates = reports.map(r => r.dates?.[0] || r.createdAt.split('T')[0]).sort();
     if (reportDates.length === 0) return [];
-    // Build continuous date range from min to max
+    // Build continuous date range from min to max, then reverse for descending
     const minDate = new Date(reportDates[0]);
     const maxDate = new Date(reportDates[reportDates.length - 1]);
     const items: { label: string }[] = [];
@@ -89,7 +90,17 @@ export function History() {
       items.push({ label: format(d, 'MM-dd') });
       d.setDate(d.getDate() + 1);
     }
+    items.reverse(); // newest first
     return items;
+  }, [state.reports]);
+
+  // Reports sorted by target date descending (newest first)
+  const sortedReports = useMemo(() => {
+    return [...(state.reports || [])].sort((a, b) => {
+      const dateA = a.dates?.[0] || a.createdAt.split('T')[0];
+      const dateB = b.dates?.[0] || b.createdAt.split('T')[0];
+      return dateB.localeCompare(dateA);
+    });
   }, [state.reports]);
 
   const toggleDate = (date: string) => {
@@ -290,7 +301,7 @@ export function History() {
                 {!state.reports || state.reports.length === 0 ? (
                   <div className="col-span-full py-20 text-center text-gray-500 border border-dashed rounded-3xl">暂无报告。</div>
                 ) : (
-                  state.reports.map((report, idx) => (
+                  sortedReports.map((report, idx) => (
                     <button 
                       key={report.id}
                       id={`report-group-${idx}`}
