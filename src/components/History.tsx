@@ -73,6 +73,25 @@ export function History() {
     return groups;
   }, [allDates, viewMode]);
 
+  // Build continuous date nav items for reports (based on report target dates, not creation time)
+  const reportNavItems = useMemo(() => {
+    const reports = state.reports || [];
+    if (reports.length === 0) return [];
+    // Collect all first-dates from report target ranges
+    const reportDates = reports.map(r => r.dates?.[0] || r.createdAt.split('T')[0]).sort();
+    if (reportDates.length === 0) return [];
+    // Build continuous date range from min to max
+    const minDate = new Date(reportDates[0]);
+    const maxDate = new Date(reportDates[reportDates.length - 1]);
+    const items: { label: string }[] = [];
+    const d = new Date(minDate);
+    while (d <= maxDate) {
+      items.push({ label: format(d, 'MM-dd') });
+      d.setDate(d.getDate() + 1);
+    }
+    return items;
+  }, [state.reports]);
+
   const toggleDate = (date: string) => {
     const next = new Set(selectedDates);
     if (next.has(date)) next.delete(date);
@@ -346,7 +365,7 @@ export function History() {
       <div 
         className="hidden lg:flex w-16 flex-col z-10 absolute right-0 top-1/2 -translate-y-1/2 bottom-auto bg-transparent items-end pr-3 py-4"
         onWheel={(e) => {
-          const items = !showReports ? groupedData : (state.reports || []).map(r => ({ label: format(parseISO(r.createdAt), 'MM-dd') }));
+          const items = !showReports ? groupedData : reportNavItems;
           if (e.deltaY > 0 && activeNavIdx < items.length - 1) {
             const nextIdx = activeNavIdx + 1;
             scrollToDate(showReports ? `report-group-${nextIdx}` : items[nextIdx].label, showReports);
@@ -362,7 +381,7 @@ export function History() {
             animate={{ y: -activeNavIdx * 24 }}
             transition={{ type: "spring", stiffness: 350, damping: 30 }}
           >
-            {(!showReports ? groupedData : (state.reports || []).map(r => ({ label: format(parseISO(r.createdAt), 'MM-dd') }))).map((item, idx) => {
+            {(!showReports ? groupedData : reportNavItems).map((item, idx) => {
               const isCenter = idx === activeNavIdx;
               const distance = Math.abs(idx - activeNavIdx);
               
