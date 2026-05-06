@@ -173,7 +173,7 @@ const TOOLS = [
 // ─── Local Rule Layer ────────────────────────────────────────────────────────
 
 function matchLocalRule(text: string): string | null {
-  if (/^(添加|新增|加个|帮我加).*(任务|事项|待办)/.test(text)) return "add_tasks";
+  if (/^(添加|新增|加个|帮我加|安排一个).*(任务|事项|待办)/.test(text)) return "add_tasks";
   if (/^(删除|删掉|去掉|移除).*(任务)/.test(text)) return "delete_task";
   if (/(进度|更新到|完成了|做到了)\s*\d+/.test(text)) return "update_task";
   if (/(拆解|拆分|细化|分解)/.test(text)) return "decompose";
@@ -232,7 +232,8 @@ function mod_chat_instruction(): string {
   return `[Chat Instruction]
 回复要求：注重情绪陪伴，理解用户压力。拒绝爹味说教，以平等朋友的语气交流。
 如果用户表达了负面情绪，先表示理解和共情，再提供建议。
-回复简洁，不超过3段。`;
+回复简洁，不超过3段。
+IMPORTANT: 不要主动提及或引用今日任务列表，除非用户的输入明确涉及任务相关内容。任务上下文仅用于工具调用时的任务匹配，不是用来当聊天素材的。`;
 }
 
 function mod_profile_context(state: AppState): string {
@@ -309,31 +310,22 @@ export async function generateRollingSummary(
   }
 }
 
-// ─── Context Need Detection ──────────────────────────────────────────────────
-
-function needsTaskContext(text: string): boolean {
-  return /任务|待办|进度|完成|做完|做好|搞定|练完|健完|跑完|写完|读完|看完|学完|交了|交完|弄完|干完|计划|安排|今天|明天|昨天|日程|todo|task/i.test(text);
-}
-
 // ─── Prompt Builder (Modular + Routed) ───────────────────────────────────────
 
-function buildSystemPrompt(state: AppState, ruleHint: string | null, userText: string): string {
+function buildSystemPrompt(state: AppState, ruleHint: string | null): string {
   const session = state.chatSessions.find((cs) => cs.id === state.activeChatSessionId);
   const chatContext = buildChatContext(session);
   const persona = mod_base_persona(state);
+  const taskCtx = mod_task_context(state);
 
   if (ruleHint && ruleHint !== "generate_report") {
-    // Task intent confirmed: lean prompt with task context
-    return [persona, mod_task_context(state), chatContext].filter(Boolean).join("\n\n");
+    // Task intent confirmed by rule: lean prompt
+    return [persona, taskCtx, chatContext].filter(Boolean).join("\n\n");
   }
 
-  // Chat / unknown intent: only inject task_context if user mentions tasks
-  const modules = [persona, mod_chat_instruction(), mod_profile_context(state)];
-  if (needsTaskContext(userText)) {
-    modules.push(mod_task_context(state));
-  }
-  modules.push(chatContext);
-  return modules.filter(Boolean).join("\n\n");
+  // Model fallback: always provide task context (for tool matching)
+  // + chat instruction (with "don't proactively mention tasks" guard)
+  return [persona, mod_chat_instruction(), taskCtx, mod_profile_context(state), chatContext].filter(Boolean).join("\n\n");
 }
 
 function getToolsForRequest(ruleHint: string | null): any[] {
@@ -368,7 +360,7 @@ export async function processAgentRequest(
   const { apiKey, baseUrl, model: apiModel } = getChatConfig(state);
 
   const ruleHint = matchLocalRule(text);
-  const systemPrompt = buildSystemPrompt(state, ruleHint, text);
+  const systemPrompt = buildSystemPrompt(state, ruleHint);
   const tools = getToolsForRequest(ruleHint);
 
   const res = await callChatCompletion({
@@ -423,7 +415,7 @@ export async function processAgentRequestStream(
   }
 
   const ruleHint = matchLocalRule(text);
-  const systemPrompt = buildSystemPrompt(state, ruleHint, text);
+  const systemPrompt = buildSystemPrompt(state, ruleHint);
   const tools = getToolsForRequest(ruleHint);
 
   const res = await callChatCompletion({
