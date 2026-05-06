@@ -205,7 +205,7 @@ function mod_base_persona(state: AppState): string {
   return `You are ${state.settings.agentName || "任务助理"}, a professional task management AI assistant. Reply in Chinese.
 Your style is: ${state.settings.agentStyle} (academic = 专业导师, gentle = 贴心助手, strict = 严厉督导).
 Current Date: ${state.activeDate}.
-If chat history is empty or has fewer than 2 messages, include a 'chatTitle' (3-10 chars) summarizing this conversation.`;
+Do NOT include any metadata like chatTitle in your reply text. Just reply naturally.`;
 }
 
 function mod_task_context(state: AppState): string {
@@ -438,8 +438,11 @@ export async function processAgentRequestStream(
     return parseToolCallToResponse(toolName, toolArgsBuffer);
   }
 
+  // Strip leaked metadata (model sometimes outputs chatTitle in plain text)
+  const cleanText = fullText.replace(/\n*chatTitle[：:]\s*.+$/i, '').trim();
+
   // Empty response fallback
-  return { intent: "chat", data: { reply: fullText || "收到！还有其他需要帮忙的吗？" } };
+  return { intent: "chat", data: { reply: cleanText || "收到！还有其他需要帮忙的吗？" } };
 }
 
 // ─── Report Generation (Report Agent) ────────────────────────────────────────
