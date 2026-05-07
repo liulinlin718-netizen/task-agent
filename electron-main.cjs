@@ -333,19 +333,15 @@ ipcMain.on('ball:collapse', () => {
 
 ipcMain.on('ball:check-snap', (event) => {
   if (!ballWindow || ballWindow.isDestroyed()) { event.returnValue = null; return; }
-  const [x, y] = ballWindow.getPosition();
+  const [x] = ballWindow.getPosition();
   const b = ballWindow.getBounds();
   const { width: sw } = screen.getPrimaryDisplay().workAreaSize;
 
-  const BALL_MARGIN = 0;
+  const BALL_MARGIN = 0; // Fixed distance from edge
   const center = x + b.width / 2;
   const SNAP_DIST = 100;
 
-  // Top edge snap takes priority
-  if (y <= SNAP_DIST) {
-    ballWindow.setPosition(b.x, BALL_MARGIN);
-    event.returnValue = 'top';
-  } else if (center <= SNAP_DIST) {
+  if (center <= SNAP_DIST) {
     ballWindow.setPosition(BALL_MARGIN, b.y);
     event.returnValue = 'left';
   } else if (sw - center <= SNAP_DIST) {
@@ -365,6 +361,9 @@ ipcMain.on('taskcenter:snap-to-edge', (event, edge, height) => {
   taskCenterWindow.setResizable(true);
   if (edge === 'right') {
     taskCenterWindow.setBounds({ x: sw - TC_STRIP_W, y: b.y, width: TC_STRIP_W, height: h });
+  } else if (edge === 'top') {
+    const w = b.width || 320;
+    taskCenterWindow.setBounds({ x: b.x, y: 0, width: w, height: TC_STRIP_W });
   } else {
     taskCenterWindow.setBounds({ x: 0, y: b.y, width: TC_STRIP_W, height: h });
   }
@@ -380,6 +379,8 @@ ipcMain.on('taskcenter:expand-from-edge', (event, edge, width, height) => {
   taskCenterWindow.setResizable(true);
   if (edge === 'right') {
     taskCenterWindow.setBounds({ x: sw - w, y: b.y, width: w, height: h });
+  } else if (edge === 'top') {
+    taskCenterWindow.setBounds({ x: b.x, y: 0, width: w, height: h });
   } else {
     taskCenterWindow.setBounds({ x: 0, y: b.y, width: w, height: h });
   }
@@ -388,10 +389,12 @@ ipcMain.on('taskcenter:expand-from-edge', (event, edge, width, height) => {
 
 ipcMain.on('taskcenter:check-snap', (event) => {
   if (!taskCenterWindow || taskCenterWindow.isDestroyed()) { event.returnValue = null; return; }
-  const [x] = taskCenterWindow.getPosition();
+  const [x, y] = taskCenterWindow.getPosition();
   const b = taskCenterWindow.getBounds();
   const { width: sw } = screen.getPrimaryDisplay().workAreaSize;
-  if (x <= SNAP_THRESHOLD) {
+  if (y <= SNAP_THRESHOLD) {
+    event.returnValue = 'top';
+  } else if (x <= SNAP_THRESHOLD) {
     event.returnValue = 'left';
   } else if (x + b.width >= sw - SNAP_THRESHOLD) {
     event.returnValue = 'right';

@@ -20,10 +20,10 @@ declare global {
 
       screenGetWorkArea: () => { width: number; height: number };
 
-      taskCenterSnapToEdge: (edge: 'left' | 'right', height?: number) => void;
-      taskCenterExpandFromEdge: (edge: 'left' | 'right', width?: number, height?: number) => void;
-      taskCenterCheckSnap: () => 'left' | 'right' | null;
-      onTaskCenterAutoSnap: (callback: (edge: 'left' | 'right' | null) => void) => void;
+      taskCenterSnapToEdge: (edge: 'left' | 'right' | 'top', height?: number) => void;
+      taskCenterExpandFromEdge: (edge: 'left' | 'right' | 'top', width?: number, height?: number) => void;
+      taskCenterCheckSnap: () => 'left' | 'right' | 'top' | null;
+      onTaskCenterAutoSnap: (callback: (edge: 'left' | 'right' | 'top' | null) => void) => void;
     };
   }
 }

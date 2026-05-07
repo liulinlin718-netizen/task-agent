@@ -7,7 +7,7 @@ import { format } from 'date-fns';
 function TaskCenterContent() {
   const { state, addTask, updateTask } = useStore();
   const [newTaskInput, setNewTaskInput] = useState('');
-  const [snappedEdge, setSnappedEdge] = useState<'left' | 'right' | null>(null);
+  const [snappedEdge, setSnappedEdge] = useState<'left' | 'right' | 'top' | null>(null);
   const [isHovering, setIsHovering] = useState(false);
   const [isResizing, setIsResizing] = useState(false);
   const [isDragging, setIsDragging] = useState(false);
@@ -126,6 +126,27 @@ function TaskCenterContent() {
 
   // --- Snapped edge indicator ---
   if (snappedEdge && !isHovering) {
+    // Top edge: horizontal strip across the width
+    if (snappedEdge === 'top') {
+      return (
+        <div
+          onMouseEnter={handleEdgeHover}
+          className="w-full h-full cursor-pointer flex items-start justify-center"
+          style={{ background: 'transparent' }}
+        >
+          <div
+            style={{
+              width: '100%',
+              height: '3px',
+              background: 'linear-gradient(90deg, #3b82f6 0%, #2563eb 50%, #3b82f6 100%)',
+              borderRadius: '0 0 3px 3px',
+              opacity: 0.6,
+            }}
+          />
+        </div>
+      );
+    }
+    // Left/Right edge: vertical strip
     return (
       <div
         onMouseEnter={handleEdgeHover}

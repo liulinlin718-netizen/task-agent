@@ -40,7 +40,7 @@ function FloatingBallContent() {
           // Near-edge snap feedback
           const workArea = window.electronAPI?.screenGetWorkArea();
           if (workArea) {
-            const near = targetX < 100 || targetX + 48 > workArea.width - 100 || targetY < 100;
+            const near = targetX < 100 || targetX + 48 > workArea.width - 100;
             setNearEdge(near);
           }
         });
