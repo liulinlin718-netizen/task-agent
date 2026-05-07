@@ -217,23 +217,29 @@ function TaskCenterContent() {
 // --- Task Card with wheel scroll progress (only on progress ring area) ---
 function TaskCard({ task, index, updateTask }: { task: any; index: number; updateTask: (id: string, u: any) => void }) {
   const progressRef = useRef<HTMLDivElement>(null);
+  const taskRef = useRef(task);
+  const updateTaskRef = useRef(updateTask);
+  taskRef.current = task;
+  updateTaskRef.current = updateTask;
 
   // Use native event listener with { passive: false } to allow preventDefault
+  // Only re-bindon task.id change — refs hold latest progress/updateTask
   useEffect(() => {
     const el = progressRef.current;
     if (!el) return;
     const handler = (e: WheelEvent) => {
-      e.preventDefault(); // prevent page scroll when hovering progress area
+      e.preventDefault();
       e.stopPropagation();
+      const t = taskRef.current;
       if (e.deltaY < 0) {
-        updateTask(task.id, { progress: Math.min(task.progress + 1, 100) });
+        updateTaskRef.current(t.id, { progress: Math.min(t.progress + 1, 100) });
       } else {
-        updateTask(task.id, { progress: Math.max(task.progress - 1, 0) });
+        updateTaskRef.current(t.id, { progress: Math.max(t.progress - 1, 0) });
       }
     };
     el.addEventListener('wheel', handler, { passive: false });
     return () => el.removeEventListener('wheel', handler);
-  }, [task.id, task.progress, updateTask]);
+  }, [task.id]);
 
   return (
     <motion.div
