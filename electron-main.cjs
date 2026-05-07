@@ -333,15 +333,19 @@ ipcMain.on('ball:collapse', () => {
 
 ipcMain.on('ball:check-snap', (event) => {
   if (!ballWindow || ballWindow.isDestroyed()) { event.returnValue = null; return; }
-  const [x] = ballWindow.getPosition();
+  const [x, y] = ballWindow.getPosition();
   const b = ballWindow.getBounds();
   const { width: sw } = screen.getPrimaryDisplay().workAreaSize;
 
-  const BALL_MARGIN = 0; // Fixed distance from edge
+  const BALL_MARGIN = 0;
   const center = x + b.width / 2;
   const SNAP_DIST = 100;
 
-  if (center <= SNAP_DIST) {
+  // Top edge snap takes priority
+  if (y <= SNAP_DIST) {
+    ballWindow.setPosition(b.x, BALL_MARGIN);
+    event.returnValue = 'top';
+  } else if (center <= SNAP_DIST) {
     ballWindow.setPosition(BALL_MARGIN, b.y);
     event.returnValue = 'left';
   } else if (sw - center <= SNAP_DIST) {
