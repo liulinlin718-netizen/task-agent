@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, useEffect } from 'react';
+import React, { createContext, useContext, useState, useEffect, useRef } from 'react';
 import { format, formatISO } from 'date-fns';
 
 export type Task = {
@@ -168,19 +168,29 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
     return defaultState;
   });
 
+  // ─── Persistence with cross-window sync (debounced to prevent feedback loop) ───
+  const isLocalUpdateRef = useRef(false);
+  const persistTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
   useEffect(() => {
-    const json = JSON.stringify(state);
-    // Persist to Electron IPC store if available, otherwise localStorage
-    if ((window as any).electronAPI?.storeSet) {
-      (window as any).electronAPI.storeSet(json);
-    }
-    localStorage.setItem('taskagent-state', json);
+    // Debounce localStorage writes to prevent feedback loops during rapid slider dragging
+    if (persistTimerRef.current) clearTimeout(persistTimerRef.current);
+    persistTimerRef.current = setTimeout(() => {
+      isLocalUpdateRef.current = true;
+      const json = JSON.stringify(state);
+      if ((window as any).electronAPI?.storeSet) {
+        (window as any).electronAPI.storeSet(json);
+      }
+      localStorage.setItem('taskagent-state', json);
+      // Reset flag after a tick to allow future external events
+      requestAnimationFrame(() => { isLocalUpdateRef.current = false; });
+    }, 50); // 50ms debounce — fast enough for UI, slow enough to break loops
   }, [state]);
 
-  // Cross-window sync: when another Electron window updates localStorage, sync here
+  // Cross-window sync: only accept external changes (not our own writes)
   useEffect(() => {
     const handleStorage = (e: StorageEvent) => {
-      if (e.key === 'taskagent-state' && e.newValue) {
+      if (e.key === 'taskagent-state' && e.newValue && !isLocalUpdateRef.current) {
         try {
           const newState = JSON.parse(e.newValue);
           setState(newState);
