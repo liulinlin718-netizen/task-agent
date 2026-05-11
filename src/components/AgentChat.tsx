@@ -1,7 +1,7 @@
 import { useState, useRef, useEffect } from "react";
 import { useStore } from "../Store";
 import { processAgentRequest, processAgentRequestStream, generateCustomSummary } from "../services/AgentService";
-import { extractTextFromFile, extractTasksFromText } from "../services/DocumentParser";
+import { extractTextFromFile } from "../services/DocumentParser";
 import { Send, Plus, History, X, MessageSquare, Trash2, RefreshCw, ArrowLeft, Paperclip } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 import Markdown from "react-markdown";
@@ -16,26 +16,14 @@ export function AgentChat() {
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const abortControllerRef = useRef<AbortController | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const [pendingFile, setPendingFile] = useState<{ file: File; name: string } | null>(null);
 
-  const handleFileUpload = async (file: File) => {
+  const handleAttachFile = (file: File) => {
     if (isTyping) return;
-    setIsTyping(true);
-    addChatMessage("user", `📎 ${file.name}`);
-    addChatMessage("model", "正在解析文档...");
-    try {
-      const text = await extractTextFromFile(file);
-      const tasks = await extractTasksFromText(text, state);
-      if (tasks.length > 0) {
-        addChatMessage("model", `从 **${file.name}** 中提取了 ${tasks.length} 个待办事项：`, tasks);
-      } else {
-        addChatMessage("model", "未能从文档中提取到待办事项。");
-      }
-    } catch (e: any) {
-      addChatMessage("model", e.message || "文档解析失败。");
-    } finally {
-      setIsTyping(false);
-    }
+    setPendingFile({ file, name: file.name });
   };
+
+  const removePendingFile = () => setPendingFile(null);
 
   const currentSession = state.chatSessions.find(cs => cs.id === state.activeChatSessionId) || state.chatSessions[0];
 
@@ -154,11 +142,37 @@ export function AgentChat() {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!input.trim() || isTyping) return;
+    const hasFile = !!pendingFile;
+    if (!input.trim() && !hasFile) return;
+    if (isTyping) return;
 
-    const userText = input.trim();
+    let userText = input.trim();
+    let fileContent = "";
+    const attachedFileName = pendingFile?.name || "";
+
+    // Extract file content if attached
+    if (pendingFile) {
+      try {
+        fileContent = await extractTextFromFile(pendingFile.file);
+      } catch (err: any) {
+        addChatMessage("user", `📎 ${attachedFileName}`);
+        addChatMessage("model", `文档解析失败: ${err.message || "未知错误"}`);
+        setPendingFile(null);
+        return;
+      }
+    }
+
+    // Build display text and LLM prompt
+    const displayText = hasFile
+      ? `📎 ${attachedFileName}${userText ? `\n${userText}` : ""}`
+      : userText;
+    const llmPrompt = hasFile
+      ? `[用户上传了文件: ${attachedFileName}]\n\n文档内容（前8000字）:\n${fileContent.slice(0, 8000)}${userText ? `\n\n用户指令: ${userText}` : "\n\n请从文档中提取所有待办事项和任务。"}`
+      : userText;
+
     setInput("");
-    addChatMessage("user", userText);
+    setPendingFile(null);
+    addChatMessage("user", displayText);
     setIsTyping(true);
 
     const abortController = new AbortController();
@@ -169,7 +183,7 @@ export function AgentChat() {
       addChatMessage("model", "");
 
       const res = await processAgentRequestStream(
-        userText, state,
+        llmPrompt, state,
         (chunk) => {
           // Typewriter effect: append text to the last model message
           appendChatMessageText(chunk);
@@ -473,16 +487,37 @@ export function AgentChat() {
         onDrop={e => {
           e.preventDefault(); e.stopPropagation();
           const file = e.dataTransfer.files?.[0];
-          if (file) handleFileUpload(file);
+          if (file) handleAttachFile(file);
         }}
       >
+        {/* Pending file badge */}
+        <AnimatePresence>
+          {pendingFile && (
+            <motion.div
+              initial={{ opacity: 0, y: 8 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: 8 }}
+              className="mb-2 flex items-center gap-2 bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-xl px-3 py-2 text-sm"
+            >
+              <Paperclip className="w-3.5 h-3.5 text-blue-500 shrink-0" />
+              <span className="text-blue-700 dark:text-blue-300 truncate flex-1">{pendingFile.name}</span>
+              <button
+                type="button"
+                onClick={removePendingFile}
+                className="text-blue-400 hover:text-red-500 transition-colors shrink-0"
+              >
+                <X className="w-3.5 h-3.5" />
+              </button>
+            </motion.div>
+          )}
+        </AnimatePresence>
         <form onSubmit={handleSubmit} className="relative flex items-center gap-2">
           <input
             ref={fileInputRef}
             type="file"
             accept=".txt,.docx,.pdf"
             className="hidden"
-            onChange={e => { const f = e.target.files?.[0]; if (f) handleFileUpload(f); e.target.value = ''; }}
+            onChange={e => { const f = e.target.files?.[0]; if (f) handleAttachFile(f); e.target.value = ''; }}
           />
           <button
             type="button"
@@ -496,10 +531,10 @@ export function AgentChat() {
           <input
             value={input}
             onChange={e => setInput(e.target.value)}
-            placeholder="输入指令..."
+            placeholder={pendingFile ? `对 ${pendingFile.name} 说点什么...` : "输入指令..."}
             className="flex-1 bg-white dark:bg-neutral-800 border border-gray-200 dark:border-neutral-700 rounded-2xl px-4 py-3 pr-10 text-sm focus:ring-2 focus:ring-blue-100 dark:focus:ring-blue-900/30 focus:border-blue-400 transition-all outline-none text-foreground placeholder:text-gray-400"
           />
-          <button type="submit" disabled={!input.trim() || isTyping} className="absolute right-3 bottom-0 top-0 m-auto text-blue-600 dark:text-blue-400 hover:text-blue-700 dark:hover:text-blue-300 disabled:opacity-50">
+          <button type="submit" disabled={(!input.trim() && !pendingFile) || isTyping} className="absolute right-3 bottom-0 top-0 m-auto text-blue-600 dark:text-blue-400 hover:text-blue-700 dark:hover:text-blue-300 disabled:opacity-50">
             <Send className="w-5 h-5" />
           </button>
         </form>
