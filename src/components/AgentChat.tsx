@@ -208,11 +208,16 @@ export function AgentChat() {
         const targetDate = res.data.targetDate || state.activeDate;
         addTask(firstTaskName, targetDate);
         // Update the placeholder message to include proposedTasks for confirmation UI
-        const msgs = state.chatSessions.find(cs => cs.id === state.activeChatSessionId)?.messages || [];
-        const lastMsg = msgs[msgs.length - 1];
-        if (lastMsg && lastMsg.role === 'model') {
-          updateMessageProposedTasks(lastMsg.id, res.data.proposedTasks);
-        }
+        // Use setState callback to read the LATEST state (closure state is stale)
+        setState(s => {
+          const session = s.chatSessions.find(cs => cs.id === s.activeChatSessionId);
+          const msgs = session?.messages || [];
+          const lastMsg = msgs[msgs.length - 1];
+          if (lastMsg && lastMsg.role === 'model') {
+            updateMessageProposedTasks(lastMsg.id, res.data.proposedTasks!);
+          }
+          return s; // no state change, just reading
+        });
         if (res.data.targetDate && res.data.targetDate !== state.activeDate) {
           setActiveDate(res.data.targetDate);
         }
@@ -257,11 +262,15 @@ export function AgentChat() {
         const task = state.tasks.find(t => t.id === res.data.taskId);
         if (task) {
           // Update the placeholder message to include proposedTasks
-          const msgs = state.chatSessions.find(cs => cs.id === state.activeChatSessionId)?.messages || [];
-          const lastMsg = msgs[msgs.length - 1];
-          if (lastMsg && lastMsg.role === 'model') {
-            updateMessageProposedTasks(lastMsg.id, res.data.proposedTasks);
-          }
+          setState(s => {
+            const session = s.chatSessions.find(cs => cs.id === s.activeChatSessionId);
+            const msgs = session?.messages || [];
+            const lastMsg = msgs[msgs.length - 1];
+            if (lastMsg && lastMsg.role === 'model') {
+              updateMessageProposedTasks(lastMsg.id, res.data.proposedTasks!);
+            }
+            return s;
+          });
         }
       }
 
