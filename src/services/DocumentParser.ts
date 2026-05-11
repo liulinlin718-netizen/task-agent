@@ -1,11 +1,15 @@
 import mammoth from "mammoth";
 import * as pdfjsLib from "pdfjs-dist";
+import pdfjsWorkerUrl from "pdfjs-dist/build/pdf.worker.min.mjs?url";
 import { AppState } from "../Store";
 import { callChatCompletion, getChatConfig } from "./AgentService";
 
+// Use bundled worker instead of CDN (CDN fails in Electron's file:// protocol)
+pdfjsLib.GlobalWorkerOptions.workerSrc = pdfjsWorkerUrl;
+
 /**
  * Extract plain text from uploaded file.
- * Supports .txt and .docx.
+ * Supports .txt, .docx, and .pdf.
  */
 export async function extractTextFromFile(file: File): Promise<string> {
   const ext = file.name.split(".").pop()?.toLowerCase();
@@ -21,16 +25,19 @@ export async function extractTextFromFile(file: File): Promise<string> {
   }
 
   if (ext === "pdf") {
-    pdfjsLib.GlobalWorkerOptions.workerSrc = `//cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjsLib.version}/pdf.worker.min.mjs`;
-    const arrayBuffer = await file.arrayBuffer();
-    const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
-    let fullText = "";
-    for (let i = 1; i <= pdf.numPages; i++) {
-      const page = await pdf.getPage(i);
-      const content = await page.getTextContent();
-      fullText += content.items.map((item: any) => item.str).join(" ") + "\n";
+    try {
+      const arrayBuffer = await file.arrayBuffer();
+      const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+      let fullText = "";
+      for (let i = 1; i <= pdf.numPages; i++) {
+        const page = await pdf.getPage(i);
+        const content = await page.getTextContent();
+        fullText += content.items.map((item: any) => item.str).join(" ") + "\n";
+      }
+      return fullText;
+    } catch (e: any) {
+      throw new Error(`PDF 解析失败: ${e.message || "未知错误"}。请确认文件未加密。`);
     }
-    return fullText;
   }
 
   throw new Error(`不支持的文件格式: .${ext}（目前支持 .txt、.docx 和 .pdf）`);
