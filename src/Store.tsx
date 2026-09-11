@@ -1,5 +1,9 @@
-import React, { createContext, useContext, useState, useEffect, useRef } from 'react';
-import { format, formatISO } from 'date-fns';
+import React, { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react';
+import { acceptSuggestions, createDefaultState, newSession, normalizeState, updateMessage } from './state/appState';
+import type { LongTermMemory } from './state/memory';
+import { readBrowserState, writeBrowserState } from './state/browserStorage';
+import type { ProactiveState } from './state/proactive';
+import { trackTaskActivity } from './state/taskActivity';
 
 export type Task = {
   id: string;
@@ -8,6 +12,7 @@ export type Task = {
   date: string; // YYYY-MM-DD
   notes?: string;
   priority?: 'low' | 'medium' | 'high';
+  lastProgressAt?: string;
 };
 
 export type HistorySummary = {
@@ -27,7 +32,10 @@ export type ChatMessage = {
   id: string;
   role: 'user' | 'model';
   text: string;
-  proposedTasks?: { name: string; added: boolean }[];
+  contextText?: string; // Bounded extracted attachment text; the UI displays text instead.
+  memoryStatus?: string;
+  proposedTasks?: { name: string; added: boolean; date?: string }[];
+  toolEvents?: { id: string; name: string; status: 'success' | 'error'; message: string }[];
   proposedTasksTargetDate?: string;
   proposedTasksDismissed?: boolean;
 };
@@ -42,6 +50,8 @@ export type ChatSession = {
 };
 
 export type AppState = {
+  memory?: LongTermMemory;
+  proactive?: ProactiveState;
   profile: {
     major: string;
     goal: string;
@@ -55,6 +65,10 @@ export type AppState = {
     agentStyle: 'academic' | 'gentle' | 'strict';
     sidebarEnabled: boolean;
     floatingBallEnabled: boolean;
+    proactiveEnabled?: boolean;
+    proactiveIntervalMinutes?: number;
+    proactiveQuietStart?: string;
+    proactiveQuietEnd?: string;
     theme: 'light' | 'dark';
     apiKey?: string;
     agentName: string;
@@ -75,429 +89,153 @@ export type AppState = {
 
 export type StoreContextType = {
   state: AppState;
+  getState: () => AppState;
   setState: React.Dispatch<React.SetStateAction<AppState>>;
+  updateAgentState: (updater: (state: AppState) => AppState, sessionId: string, messageId: string) => void;
   addTask: (name: string, date: string) => void;
   updateTask: (id: string, updates: Partial<Task>) => void;
   deleteTask: (id: string) => void;
-  addChatMessage: (role: 'user' | 'model', text: string, proposedTasks?: string[], targetDate?: string) => void;
-  updateChatMessage: (messageId: string, updates: Partial<ChatMessage>) => void;
-  appendChatMessageText: (chunk: string) => void;
-  deleteChatMessage: (messageId: string) => void;
+  addChatMessage: (role: 'user' | 'model', text: string, proposedTasks?: string[], targetDate?: string, sessionId?: string) => string;
+  updateChatMessage: (messageId: string, updates: Partial<ChatMessage>, sessionId?: string) => void;
   acceptProposedTask: (messageId: string, taskIndex: number, date: string) => void;
   acceptAllProposedTasks: (messageId: string, date: string) => void;
   dismissProposedTasks: (messageId: string) => void;
-  updateMessageProposedTasks: (messageId: string, newTasks: string[]) => void;
   setActiveDate: (date: string) => void;
   createNewChat: () => void;
   setActiveChatSession: (id: string) => void;
   deleteChatSession: (id: string) => void;
-  updateChatSessionTitle: (id: string, title: string) => void;
   addReport: (title: string, dates: string[], content: string) => void;
   deleteReport: (id: string) => void;
 };
 
-const defaultSessionId = Date.now().toString();
-
-const defaultState: AppState = {
-  profile: { major: '', goal: '', skills: '' },
-  tasks: [
-    { id: '1', name: '阅读文献：多模态大模型综述', progress: 30, date: format(new Date(), 'yyyy-MM-dd') },
-    { id: '2', name: '撰写引言部分', progress: 0, date: format(new Date(), 'yyyy-MM-dd') }
-  ],
-  settings: { rolloverTime: '02:00', agentStyle: 'academic', sidebarEnabled: true, floatingBallEnabled: false, theme: 'light', agentName: '任务助理', apiBaseUrl: 'https://generativelanguage.googleapis.com/v1beta/openai', apiModel: 'gemini-2.5-flash' },
-  chatSessions: [{
-    id: defaultSessionId,
-    title: '新对话',
-    messages: [
-      { id: 'initial', role: 'model', text: '你好！我是你的任务助理。今天我能帮你做些什么？' }
-    ],
-    updatedAt: new Date().toISOString()
-  }],
-  activeChatSessionId: defaultSessionId,
-  activeDate: format(new Date(), 'yyyy-MM-dd'),
-  lastRolloverDate: format(new Date(), 'yyyy-MM-dd'),
-  historySummaries: [],
-  reports: [],
-};
+function loadState(): { state: AppState; error: string } {
+  let loaded: AppState | undefined;
+  try {
+    const desktop = window.electronAPI;
+    const saved = desktop?.storeGet?.() || readBrowserState(localStorage);
+    const state = saved ? normalizeState(JSON.parse(saved)) : createDefaultState();
+    loaded = state;
+    const json = JSON.stringify(state);
+    if (desktop?.storeSet) {
+      if (!desktop.storeSet(json)) throw new Error('无法保存本地数据');
+    } else writeBrowserState(localStorage, json);
+    return { state, error: '' };
+  } catch (error) {
+    return { state: loaded || createDefaultState(), error: `${loaded ? '数据已读取，但保存失败' : '读取数据失败，原文件未覆盖'}：${error instanceof Error ? error.message : String(error)}` };
+  }
+}
 
 const StoreContext = createContext<StoreContextType | null>(null);
 
 export function StoreProvider({ children }: { children: React.ReactNode }) {
-  const [state, setState] = useState<AppState>(() => {
-    // Try Electron IPC store first, fall back to localStorage
-    const electronData = (window as any).electronAPI?.storeGet?.();
-    const saved = electronData || localStorage.getItem('taskagent-state') || localStorage.getItem('scholaragent-state');
-    if (saved) {
-      const p = JSON.parse(saved);
-      // migrations
-      if (!p.lastRolloverDate) p.lastRolloverDate = format(new Date(), 'yyyy-MM-dd');
-      if (!p.historySummaries) p.historySummaries = [];
-      if (!p.settings.theme) p.settings.theme = 'light';
-      if (!p.settings.agentName) p.settings.agentName = '任务助理';
-      // v1 → v2 migration: apiFormat + apiUrl → apiBaseUrl
-      if (p.settings.apiFormat && !p.settings.apiBaseUrl) {
-        const oldUrl = p.settings.apiUrl || '';
-        if (p.settings.apiFormat === 'gemini') {
-          p.settings.apiBaseUrl = oldUrl
-            ? (oldUrl.replace(/\/$/, '') + '/openai')
-            : 'https://generativelanguage.googleapis.com/v1beta/openai';
-        } else {
-          // openai / deepseek / qwen / mimo / glm / minimax / doubao
-          p.settings.apiBaseUrl = oldUrl || 'https://generativelanguage.googleapis.com/v1beta/openai';
-        }
-        delete p.settings.apiFormat;
-        delete p.settings.apiUrl;
-      }
-      if (!p.settings.apiBaseUrl) p.settings.apiBaseUrl = 'https://generativelanguage.googleapis.com/v1beta/openai';
+  const [initial] = useState(loadState);
+  const [state, renderState] = useState(initial.state);
+  const [persistenceError, setPersistenceError] = useState(initial.error);
+  const stateRef = useRef(state);
+  const getState = useCallback(() => stateRef.current, []);
 
-      // migrate chatHistory to chatSessions
-      if (!p.chatSessions && p.chatHistory) {
-        const defaultSessionId = Date.now().toString();
-        p.chatSessions = [{
-          id: defaultSessionId,
-          title: '旧对话',
-          messages: p.chatHistory,
-          updatedAt: new Date().toISOString()
-        }];
-        p.activeChatSessionId = defaultSessionId;
-        delete p.chatHistory;
-      }
-      if (!p.reports) p.reports = [];
-      return p;
+  // Commit outside React's updater: side effects must not run twice in StrictMode.
+  // The main process merges changes against base, serializes writes and broadcasts the committed state.
+  const commit = useCallback((update: React.SetStateAction<AppState>, guard?: { sessionId: string; messageId: string }) => {
+    const previous = stateRef.current;
+    let next = typeof update === 'function' ? update(previous) : update;
+    if (next === previous) return;
+    try {
+      if (!window.electronAPI?.storeCommit) next = trackTaskActivity(previous, next);
+      const json = JSON.stringify(next);
+      const desktop = window.electronAPI;
+      let committed = next;
+      if (desktop?.storeCommit) {
+        const result = desktop.storeCommit(json, JSON.stringify(previous), guard);
+        if (!result) throw new Error('写入失败，请检查磁盘空间或数据格式');
+        committed = JSON.parse(result);
+      } else if (desktop?.storeSet) {
+        if (!desktop.storeSet(json)) throw new Error('写入失败，请检查磁盘空间或数据格式');
+      } else writeBrowserState(localStorage, json);
+      stateRef.current = committed;
+      renderState(committed);
+      setPersistenceError('');
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      setPersistenceError(`修改未保存：${message}`);
+      throw new Error(message);
     }
-    return defaultState;
-  });
-
-  // ─── Persistence with cross-window sync (debounced to prevent feedback loop) ───
-  const isLocalUpdateRef = useRef(false);
-  const persistTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  }, []);
+  const setState = useCallback<React.Dispatch<React.SetStateAction<AppState>>>((update) => commit(update), [commit]);
+  const updateAgentState = useCallback((updater: (state: AppState) => AppState, sessionId: string, messageId: string) => {
+    commit(updater, { sessionId, messageId });
+  }, [commit]);
 
   useEffect(() => {
-    // Debounce localStorage writes to prevent feedback loops during rapid slider dragging
-    if (persistTimerRef.current) clearTimeout(persistTimerRef.current);
-    persistTimerRef.current = setTimeout(() => {
-      isLocalUpdateRef.current = true;
-      const json = JSON.stringify(state);
-      if ((window as any).electronAPI?.storeSet) {
-        (window as any).electronAPI.storeSet(json);
-      }
-      localStorage.setItem('taskagent-state', json);
-      // Reset flag after a tick to allow future external events
-      requestAnimationFrame(() => { isLocalUpdateRef.current = false; });
-    }, 50); // 50ms debounce — fast enough for UI, slow enough to break loops
-  }, [state]);
-
-  // Cross-window sync: only accept external changes (not our own writes)
-  useEffect(() => {
-    const handleStorage = (e: StorageEvent) => {
-      if (e.key === 'taskagent-state' && e.newValue && !isLocalUpdateRef.current) {
-        try {
-          const newState = JSON.parse(e.newValue);
-          setState(newState);
-        } catch { /* ignore parse errors */ }
+    const receive = (json: string) => {
+      try {
+        const next = normalizeState(JSON.parse(json));
+        stateRef.current = next;
+        renderState(next);
+      } catch { setPersistenceError('收到的数据格式无效，请检查备份文件。'); }
+    };
+    if (window.electronAPI?.onStoreChanged) return window.electronAPI.onStoreChanged(receive);
+    const handleStorage = (event: StorageEvent) => {
+      if (event.key === 'taskagent-state' || event.key === 'taskagent-memory') {
+        try { const saved = readBrowserState(localStorage); if (saved) receive(saved); }
+        catch { setPersistenceError('读取长期记忆失败，请检查本地数据。'); }
       }
     };
     window.addEventListener('storage', handleStorage);
     return () => window.removeEventListener('storage', handleStorage);
   }, []);
 
-  // Sync settings with Electron windows — independently
-  useEffect(() => {
-    window.electronAPI?.updateBall(state.settings.floatingBallEnabled);
-  }, [state.settings.floatingBallEnabled]);
-
-  useEffect(() => {
-    window.electronAPI?.updateTaskCenter(state.settings.sidebarEnabled);
-  }, [state.settings.sidebarEnabled]);
+  useEffect(() => { window.electronAPI?.updateBall(state.settings.floatingBallEnabled); }, [state.settings.floatingBallEnabled]);
+  useEffect(() => { window.electronAPI?.updateTaskCenter(state.settings.sidebarEnabled); }, [state.settings.sidebarEnabled]);
 
   const addTask = (name: string, date: string) => {
-    setState(s => ({
-      ...s,
-      tasks: [...s.tasks, { id: Date.now().toString() + Math.random().toString(), name, progress: 0, date }]
-    }));
+    if (!name.trim()) return;
+    setState(s => ({ ...s, tasks: [...s.tasks, { id: crypto.randomUUID(), name: name.trim(), progress: 0, date }] }));
   };
+  const updateTask = (id: string, updates: Partial<Task>) => setState(s => ({ ...s,
+    tasks: s.tasks.map(t => t.id === id ? { ...t, ...updates, id: t.id,
+      progress: updates.progress === undefined ? t.progress : Math.max(0, Math.min(100, updates.progress)) } : t),
+  }));
+  const deleteTask = (id: string) => setState(s => ({ ...s, tasks: s.tasks.filter(t => t.id !== id) }));
 
-  const updateTask = (id: string, updates: Partial<Task>) => {
-    setState(s => ({
-      ...s,
-      tasks: s.tasks.map(t => t.id === id ? { ...t, ...updates } : t)
-    }));
+  const addChatMessage = (role: 'user' | 'model', text: string, proposedTasks?: string[], targetDate?: string, sessionId?: string) => {
+    const id = crypto.randomUUID();
+    setState(s => ({ ...s, chatSessions: s.chatSessions.map(session => {
+      if (session.id !== (sessionId || s.activeChatSessionId)) return session;
+      const title = role === 'user' && ['新对话', '旧对话'].includes(session.title)
+        ? text.slice(0, 15) + (text.length > 15 ? '…' : '') : session.title;
+      return { ...session, title, updatedAt: new Date().toISOString(), messages: [...session.messages,
+        { id, role, text, proposedTasks: proposedTasks?.map(name => ({ name, added: false })), proposedTasksTargetDate: targetDate }] };
+    }) }));
+    return id;
   };
-
-  const deleteTask = (id: string) => {
-    setState(s => ({
-      ...s,
-      tasks: s.tasks.filter(t => t.id !== id)
-    }));
-  };
-
-  const addChatMessage = (role: 'user' | 'model', text: string, proposedTasks?: string[], targetDate?: string) => {
-    setState(s => {
-      const sessionIndex = s.chatSessions.findIndex(cs => cs.id === s.activeChatSessionId);
-      if (sessionIndex === -1) return s;
-
-      const session = s.chatSessions[sessionIndex];
-      const newMessage: ChatMessage = {
-        id: Date.now().toString() + Math.random().toString(),
-        role,
-        text,
-        proposedTasks: proposedTasks?.map(name => ({ name, added: false })),
-        proposedTasksTargetDate: targetDate
-      };
-
-      let newTitle = session.title;
-      // Auto-generate title from first user message if it's "新对话" or "旧对话"
-      if (role === 'user' && (session.title === '新对话' || session.title === '旧对话') && session.messages.length <= 2) {
-        newTitle = text.slice(0, 15) + (text.length > 15 ? '...' : '');
-      }
-
-      const newSessions = [...s.chatSessions];
-      newSessions[sessionIndex] = {
-        ...session,
-        title: newTitle,
-        messages: [...session.messages, newMessage],
-        updatedAt: new Date().toISOString()
-      };
-
-      return {
-        ...s,
-        chatSessions: newSessions
-      };
-    });
-  };
-
-  const updateChatMessage = (messageId: string, updates: Partial<ChatMessage>) => {
-    setState(s => {
-      const sessionIndex = s.chatSessions.findIndex(cs => cs.id === s.activeChatSessionId);
-      if (sessionIndex === -1) return s;
-      const session = s.chatSessions[sessionIndex];
-      const newMessages = [...session.messages];
-      const msgIndex = newMessages.findIndex(m => m.id === messageId);
-      if (msgIndex === -1) return s;
-
-      newMessages[msgIndex] = { ...newMessages[msgIndex], ...updates };
-      const newSessions = [...s.chatSessions];
-      newSessions[sessionIndex] = { ...session, messages: newMessages, updatedAt: new Date().toISOString() };
-      return { ...s, chatSessions: newSessions };
-    });
-  };
-
-  const appendChatMessageText = (chunk: string) => {
-    setState(s => {
-      const sessionIndex = s.chatSessions.findIndex(cs => cs.id === s.activeChatSessionId);
-      if (sessionIndex === -1) return s;
-      const session = s.chatSessions[sessionIndex];
-      const newMessages = [...session.messages];
-      // Append to the last message (the streaming placeholder)
-      const lastIdx = newMessages.length - 1;
-      if (lastIdx < 0) return s;
-      newMessages[lastIdx] = { ...newMessages[lastIdx], text: newMessages[lastIdx].text + chunk };
-      const newSessions = [...s.chatSessions];
-      newSessions[sessionIndex] = { ...session, messages: newMessages, updatedAt: new Date().toISOString() };
-      return { ...s, chatSessions: newSessions };
-    });
-  };
-
-  const deleteChatMessage = (messageId: string) => {
-    setState(s => {
-      const sessionIndex = s.chatSessions.findIndex(cs => cs.id === s.activeChatSessionId);
-      if (sessionIndex === -1) return s;
-      const session = s.chatSessions[sessionIndex];
-      const newMessages = session.messages.filter(m => m.id !== messageId);
-
-      const newSessions = [...s.chatSessions];
-      newSessions[sessionIndex] = { ...session, messages: newMessages, updatedAt: new Date().toISOString() };
-      return { ...s, chatSessions: newSessions };
-    });
-  };
-
-  const acceptProposedTask = (messageId: string, taskIndex: number, date: string) => {
-    setState(s => {
-      const sessionIndex = s.chatSessions.findIndex(cs => cs.id === s.activeChatSessionId);
-      if (sessionIndex === -1) return s;
-      const session = s.chatSessions[sessionIndex];
-      const newMessages = [...session.messages];
-      const msgIndex = newMessages.findIndex(m => m.id === messageId);
-      if (msgIndex === -1) return s;
-      const msg = newMessages[msgIndex];
-      if (!msg.proposedTasks || !msg.proposedTasks[taskIndex]) return s;
-
-      msg.proposedTasks = [...msg.proposedTasks];
-      msg.proposedTasks[taskIndex] = { ...msg.proposedTasks[taskIndex], added: true };
-      newMessages[msgIndex] = { ...msg, proposedTasks: msg.proposedTasks };
-
-      const newSessions = [...s.chatSessions];
-      newSessions[sessionIndex] = { ...session, messages: newMessages, updatedAt: new Date().toISOString() };
-
-      const targetDate = msg.proposedTasksTargetDate || date;
-      const newTask = { id: Date.now().toString() + Math.random().toString(), name: msg.proposedTasks[taskIndex].name, progress: 0, date: targetDate };
-
-      return {
-        ...s,
-        chatSessions: newSessions,
-        tasks: [...s.tasks, newTask]
-      };
-    });
-  };
-
-  const acceptAllProposedTasks = (messageId: string, date: string) => {
-    setState(s => {
-      const sessionIndex = s.chatSessions.findIndex(cs => cs.id === s.activeChatSessionId);
-      if (sessionIndex === -1) return s;
-      const session = s.chatSessions[sessionIndex];
-      const newMessages = [...session.messages];
-      const msgIndex = newMessages.findIndex(m => m.id === messageId);
-      if (msgIndex === -1) return s;
-      const msg = newMessages[msgIndex];
-      if (!msg.proposedTasks || msg.proposedTasksDismissed) return s;
-
-      const targetDate = msg.proposedTasksTargetDate || date;
-      const newTasksToAdd: Task[] = [];
-      const updatedProposedTasks = msg.proposedTasks.map(pt => {
-        if (!pt.added) {
-          newTasksToAdd.push({ id: Date.now().toString() + Math.random().toString(), name: pt.name, progress: 0, date: targetDate });
-          return { ...pt, added: true };
-        }
-        return pt;
-      });
-
-      newMessages[msgIndex] = { ...msg, proposedTasks: updatedProposedTasks };
-
-      const newSessions = [...s.chatSessions];
-      newSessions[sessionIndex] = { ...session, messages: newMessages, updatedAt: new Date().toISOString() };
-
-      return {
-        ...s,
-        chatSessions: newSessions,
-        tasks: [...s.tasks, ...newTasksToAdd]
-      };
-    });
-  };
-
-  const dismissProposedTasks = (messageId: string) => {
-    setState(s => {
-      const sessionIndex = s.chatSessions.findIndex(cs => cs.id === s.activeChatSessionId);
-      if (sessionIndex === -1) return s;
-      const session = s.chatSessions[sessionIndex];
-      const newMessages = [...session.messages];
-      const msgIndex = newMessages.findIndex(m => m.id === messageId);
-      if (msgIndex === -1) return s;
-
-      newMessages[msgIndex] = { ...newMessages[msgIndex], proposedTasksDismissed: true };
-
-      const newSessions = [...s.chatSessions];
-      newSessions[sessionIndex] = { ...session, messages: newMessages, updatedAt: new Date().toISOString() };
-
-      return { ...s, chatSessions: newSessions };
-    });
-  };
-
-  const updateMessageProposedTasks = (messageId: string, newTasks: string[]) => {
-    setState(s => {
-      const sessionIndex = s.chatSessions.findIndex(cs => cs.id === s.activeChatSessionId);
-      if (sessionIndex === -1) return s;
-      const session = s.chatSessions[sessionIndex];
-      const newMessages = [...session.messages];
-      const msgIndex = newMessages.findIndex(m => m.id === messageId);
-      if (msgIndex === -1) return s;
-
-      newMessages[msgIndex] = {
-        ...newMessages[msgIndex],
-        proposedTasks: newTasks.map(name => ({ name, added: false }))
-      };
-
-      const newSessions = [...s.chatSessions];
-      newSessions[sessionIndex] = { ...session, messages: newMessages, updatedAt: new Date().toISOString() };
-
-      return { ...s, chatSessions: newSessions };
-    });
-  };
-
-  const setActiveDate = (date: string) => {
-    setState(s => ({ ...s, activeDate: date }));
-  };
-
+  const updateChatMessage = (messageId: string, updates: Partial<ChatMessage>, sessionId?: string) =>
+    setState(s => updateMessage(s, messageId, m => ({ ...m, ...updates }), sessionId));
+  const acceptProposedTask = (messageId: string, taskIndex: number, date: string) => setState(s => acceptSuggestions(s, messageId, date, taskIndex));
+  const acceptAllProposedTasks = (messageId: string, date: string) => setState(s => acceptSuggestions(s, messageId, date));
+  const dismissProposedTasks = (messageId: string) => updateChatMessage(messageId, { proposedTasksDismissed: true });
+  const setActiveDate = (date: string) => setState(s => ({ ...s, activeDate: date }));
   const createNewChat = () => {
-    setState(s => {
-      const newId = Date.now().toString();
-      return {
-        ...s,
-        chatSessions: [
-          {
-            id: newId,
-            title: '新对话',
-            messages: [{ id: 'initial', role: 'model', text: '你好！我是你的任务助理。今天我能帮你做些什么？' }],
-            updatedAt: new Date().toISOString()
-          },
-          ...s.chatSessions
-        ],
-        activeChatSessionId: newId
-      }
-    });
+    const session = newSession();
+    setState(s => ({ ...s, chatSessions: [session, ...s.chatSessions], activeChatSessionId: session.id }));
   };
+  const setActiveChatSession = (id: string) => setState(s => s.chatSessions.some(cs => cs.id === id) ? { ...s, activeChatSessionId: id } : s);
+  const deleteChatSession = (id: string) => setState(s => {
+    const remaining = s.chatSessions.filter(cs => cs.id !== id);
+    const chatSessions = remaining.length ? remaining : [newSession()];
+    return { ...s, chatSessions, activeChatSessionId: s.activeChatSessionId === id ? chatSessions[0].id : s.activeChatSessionId };
+  });
+  const addReport = (title: string, dates: string[], content: string) => setState(s => ({ ...s,
+    reports: [{ id: crypto.randomUUID(), title, dates, content, createdAt: new Date().toISOString() }, ...s.reports],
+  }));
+  const deleteReport = (id: string) => setState(s => ({ ...s, reports: s.reports.filter(r => r.id !== id) }));
 
-  const setActiveChatSession = (id: string) => {
-    setState(s => ({ ...s, activeChatSessionId: id }));
-  };
-
-  const deleteChatSession = (id: string) => {
-    setState(s => {
-      const newSessions = s.chatSessions.filter(cs => cs.id !== id);
-      if (newSessions.length === 0) {
-        const newId = Date.now().toString();
-        return {
-          ...s,
-          chatSessions: [{
-            id: newId,
-            title: '新对话',
-            messages: [{ id: 'initial', role: 'model', text: '你好！我是你的任务助理。今天我能帮你做些什么？' }],
-            updatedAt: new Date().toISOString()
-          }],
-          activeChatSessionId: newId
-        }
-      }
-      return {
-        ...s,
-        chatSessions: newSessions,
-        activeChatSessionId: s.activeChatSessionId === id ? newSessions[0].id : s.activeChatSessionId
-      }
-    });
-  };
-
-  const updateChatSessionTitle = (id: string, title: string) => {
-    setState(s => {
-      const sessionIndex = s.chatSessions.findIndex(cs => cs.id === id);
-      if (sessionIndex === -1) return s;
-      const newSessions = [...s.chatSessions];
-      newSessions[sessionIndex] = { ...newSessions[sessionIndex], title };
-      return { ...s, chatSessions: newSessions };
-    });
-  };
-
-  const addReport = (title: string, dates: string[], content: string) => {
-    setState(s => ({
-      ...s,
-      reports: [
-        { id: Date.now().toString(), title, dates, content, createdAt: new Date().toISOString() },
-        ...(s.reports || [])
-      ]
-    }));
-  };
-
-  const deleteReport = (id: string) => {
-    setState(s => ({ ...s, reports: (s.reports || []).filter(r => r.id !== id) }));
-  };
-
-  return (
-    <StoreContext.Provider value={{
-      state, setState, addTask, updateTask, deleteTask,
-      addChatMessage, updateChatMessage, appendChatMessageText, deleteChatMessage, acceptProposedTask, acceptAllProposedTasks, dismissProposedTasks, updateMessageProposedTasks, setActiveDate,
-      createNewChat, setActiveChatSession, deleteChatSession,
-      updateChatSessionTitle, addReport, deleteReport
-    }}>
-      {children}
-    </StoreContext.Provider>
-  );
+  return <StoreContext.Provider value={{ state, getState, setState, updateAgentState, addTask, updateTask, deleteTask,
+    addChatMessage, updateChatMessage, acceptProposedTask, acceptAllProposedTasks, dismissProposedTasks,
+    setActiveDate, createNewChat, setActiveChatSession, deleteChatSession, addReport, deleteReport }}>
+    {persistenceError && <div role="alert" className="fixed top-0 inset-x-0 z-50 bg-red-100 p-3 text-sm text-red-900">{persistenceError}</div>}
+    {children}
+  </StoreContext.Provider>;
 }
 
 export function useStore() {

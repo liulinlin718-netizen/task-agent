@@ -1,15 +1,21 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { Send, Sparkles, Pin, PinOff } from 'lucide-react';
+import { Send, Sparkles, Pin, PinOff, Check, Minus } from 'lucide-react';
 import { StoreProvider, useStore } from '../Store';
-import { processAgentRequest } from '../services/AgentService';
+import { useAgentChat } from '../hooks/useAgentChat';
+import { ToolActivity } from './ToolActivity';
+import { ReminderCard } from './ReminderCard';
 import Markdown from 'react-markdown';
 
 function FloatingBallContent() {
+  const { state } = useStore();
   const [expanded, setExpanded] = useState(false);
   const [isPinned, setIsPinned] = useState(false);
   const [isDragging, setIsDragging] = useState(false);
   const [nearEdge, setNearEdge] = useState(false);
+  const [notice, setNotice] = useState('');
+  const [helpDraft, setHelpDraft] = useState<{ id: string; text: string } | null>(null);
+  const noticeTimer = useRef<number | null>(null);
   const dragStartOffset = useRef({ x: 0, y: 0 });
   const dragStartScreen = useRef({ x: 0, y: 0 });
   const hasMoved = useRef(false);
@@ -40,7 +46,7 @@ function FloatingBallContent() {
           // Near-edge snap feedback
           const workArea = window.electronAPI?.screenGetWorkArea();
           if (workArea) {
-            const near = targetX < 100 || targetX + 48 > workArea.width - 100;
+            const near = targetX < workArea.x + 100 || targetX + 48 > workArea.x + workArea.width - 100;
             setNearEdge(near);
           }
         });
@@ -54,7 +60,11 @@ function FloatingBallContent() {
     };
     window.addEventListener('mousemove', onMove);
     window.addEventListener('mouseup', onUp);
-    return () => { window.removeEventListener('mousemove', onMove); window.removeEventListener('mouseup', onUp); };
+    return () => {
+      if (raf) cancelAnimationFrame(raf);
+      window.removeEventListener('mousemove', onMove);
+      window.removeEventListener('mouseup', onUp);
+    };
   }, [isDragging]);
 
   const handleBallClick = () => {
@@ -67,15 +77,39 @@ function FloatingBallContent() {
 
   const collapseTimer = useRef<number | null>(null);
 
-  const clearCollapseTimer = () => {
+  const clearCollapseTimer = useCallback(() => {
     if (collapseTimer.current) { clearTimeout(collapseTimer.current); collapseTimer.current = null; }
+  }, []);
+
+  const showReminderSuccess = (message: string) => {
+    if (noticeTimer.current) clearTimeout(noticeTimer.current);
+    setNotice(message);
+    noticeTimer.current = window.setTimeout(() => setNotice(''), 2500);
   };
 
+  const consumeHelpDraft = useCallback(() => setHelpDraft(null), []);
+
+  useEffect(() => {
+    const unsubscribe = window.electronAPI?.onReminderHelp(detail => {
+      clearCollapseTimer();
+      setHelpDraft({ id: crypto.randomUUID(), text: detail.prompt });
+      setIsPinned(true);
+      setExpanded(true);
+    });
+    window.electronAPI?.ballReady();
+    return () => {
+      unsubscribe?.();
+      clearCollapseTimer();
+      if (noticeTimer.current) clearTimeout(noticeTimer.current);
+    };
+  }, [clearCollapseTimer]);
+
   const handleCollapse = useCallback(() => {
+    clearCollapseTimer();
     setExpanded(false);
     setIsPinned(false);
     window.electronAPI?.ballCollapse();
-  }, []);
+  }, [clearCollapseTimer]);
 
   // Auto-collapse on mouse leave if not pinned
   const handlePanelMouseLeave = () => {
@@ -110,9 +144,16 @@ function FloatingBallContent() {
   return (
     <div className="w-full h-full flex items-center justify-center relative">
       <AnimatePresence>
-        {!expanded ? (
+        {!expanded && state.proactive?.active ? (
+          <ReminderCard key={state.proactive.active.id} reminder={state.proactive.active} onSuccess={showReminderSuccess} onDragStart={handleBallMouseDown} />
+        ) : !expanded ? (
           <motion.div
             key="ball"
+            role="button"
+            aria-label={notice ? `${notice}，打开悬浮球对话` : '打开悬浮球对话'}
+            title={notice || '打开悬浮球对话'}
+            tabIndex={0}
+            onKeyDown={e => { if (e.key === "Enter" || e.key === " ") handleBallClick(); }}
             initial={{ scale: 0.8, opacity: 0 }}
             animate={{ scale: 1, opacity: 1 }}
             transition={{ type: 'spring', stiffness: 500, damping: 30 }}
@@ -127,7 +168,7 @@ function FloatingBallContent() {
               transition: 'box-shadow 0.15s ease',
             }}
           >
-            <Sparkles className="w-5 h-5 text-white pointer-events-none" />
+            {notice ? <Check className="w-5 h-5 text-white pointer-events-none" /> : <Sparkles className="w-5 h-5 text-white pointer-events-none" />}
           </motion.div>
         ) : (
           <motion.div
@@ -145,7 +186,7 @@ function FloatingBallContent() {
               boxShadow: '0 8px 40px rgba(0,0,0,0.5)',
             }}
           >
-            <ChatPanel isPinned={isPinned} onTogglePin={() => setIsPinned(p => !p)} />
+            <ChatPanel isPinned={isPinned} onTogglePin={() => setIsPinned(p => !p)} onCollapse={handleCollapse} helpDraft={helpDraft} onDraftConsumed={consumeHelpDraft} />
           </motion.div>
         )}
       </AnimatePresence>
@@ -153,59 +194,35 @@ function FloatingBallContent() {
   );
 }
 
-function ChatPanel({ isPinned, onTogglePin }: { isPinned: boolean; onTogglePin: () => void }) {
-  const { state, addTask, addChatMessage, updateTask, deleteTask, setActiveDate, updateChatSessionTitle } = useStore();
+function ChatPanel({ isPinned, onTogglePin, onCollapse, helpDraft, onDraftConsumed }: {
+  isPinned: boolean;
+  onTogglePin: () => void;
+  onCollapse: () => void;
+  helpDraft: { id: string; text: string } | null;
+  onDraftConsumed: () => void;
+}) {
+  const { state, acceptProposedTask, acceptAllProposedTasks } = useStore();
+  const { busy: isTyping, send, stop } = useAgentChat();
   const [input, setInput] = useState('');
-  const [isTyping, setIsTyping] = useState(false);
+  const [isHelpDraft, setIsHelpDraft] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
-  const abortRef = useRef<AbortController | null>(null);
 
   const session = state.chatSessions.find(cs => cs.id === state.activeChatSessionId) || state.chatSessions[0];
 
   useEffect(() => { messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' }); }, [session?.messages, isTyping]);
 
+  useEffect(() => {
+    if (!helpDraft) return;
+    setInput(helpDraft.text);
+    setIsHelpDraft(true);
+    onDraftConsumed();
+  }, [helpDraft, onDraftConsumed]);
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!input.trim() || isTyping) return;
-    const text = input.trim(); setInput('');
-    addChatMessage('user', text); setIsTyping(true);
-    const ac = new AbortController(); abortRef.current = ac;
-    try {
-      const res = await processAgentRequest(text, state, ac.signal);
-      let reply = res.data.reply || '';
-      if (res.intent === 'add_tasks' && res.data.proposedTasks?.length) {
-        reply = reply || '好的，为你生成了以下规划：';
-        const firstTaskName = res.data.proposedTasks[0];
-        const targetDate = res.data.targetDate || state.activeDate;
-        addTask(firstTaskName, targetDate);
-        addChatMessage('model', reply, res.data.proposedTasks, res.data.targetDate);
-      } else if (res.intent === 'update_task' && res.data.taskId) {
-        const updates: any = {};
-        if (res.data.progress !== undefined) updates.progress = res.data.progress;
-        if (res.data.date) updates.date = res.data.date;
-        if (res.data.notes) updates.notes = res.data.notes;
-        if (res.data.priority) updates.priority = res.data.priority;
-        updateTask(res.data.taskId, updates);
-        const name = state.tasks.find(t => t.id === res.data.taskId)?.name || '任务';
-        reply = reply || `已更新 **${name}**。`;
-        addChatMessage('model', reply);
-      } else if (res.intent === 'delete_task' && res.data.taskId) {
-        const name = state.tasks.find(t => t.id === res.data.taskId)?.name || '任务';
-        deleteTask(res.data.taskId);
-        reply = reply || `已删除任务：**${name}**。`;
-        addChatMessage('model', reply);
-      } else { addChatMessage('model', reply); }
-      if (res.data.chatTitle?.length) updateChatSessionTitle(state.activeChatSessionId, res.data.chatTitle);
-    } catch (err: any) {
-      addChatMessage('model', err.name === 'AbortError' ? '已停止生成。' : (err.message || '处理请求时出错。'));
-    } finally { 
-      setIsTyping(false); 
-      abortRef.current = null;
-      // Refocus input after response if it's still expanded
-      requestAnimationFrame(() => {
-        document.querySelector('input')?.focus();
-      });
-    }
+    const text = input.trim(); setInput(''); setIsHelpDraft(false);
+    await send(text);
   };
 
   const msgs = (session?.messages || []).slice(-20);
@@ -240,13 +257,19 @@ function ChatPanel({ isPinned, onTogglePin }: { isPinned: boolean; onTogglePin: 
           <div className="w-2 h-2 rounded-full bg-blue-400 animate-pulse" />
           <span className="text-xs font-semibold text-white/80">{state.settings.agentName || '科研助理'}</span>
         </div>
+        <div className="flex items-center gap-1">
         <button
+          onMouseDown={e => e.stopPropagation()}
           onClick={onTogglePin}
           className={`w-6 h-6 rounded-full flex items-center justify-center transition-all ${isPinned ? 'text-blue-400 bg-blue-500/20' : 'text-white/30 hover:text-white/60 hover:bg-white/10'}`}
           title={isPinned ? '取消固定' : '固定在桌面'}
+          aria-label={isPinned ? '取消固定' : '固定在桌面'}
         >
           {isPinned ? <Pin className="w-3.5 h-3.5" /> : <PinOff className="w-3.5 h-3.5" />}
         </button>
+        <button onMouseDown={event => event.stopPropagation()} onClick={onCollapse} aria-label="收起悬浮球对话" title="收起对话"
+          className="flex h-6 w-6 items-center justify-center rounded-full text-white/40 transition-colors hover:bg-white/10 hover:text-white/70"><Minus className="h-3.5 w-3.5" /></button>
+        </div>
       </div>
 
       <div className="flex-1 overflow-y-auto px-4 py-3 space-y-3 hide-scrollbar">
@@ -257,23 +280,31 @@ function ChatPanel({ isPinned, onTogglePin }: { isPinned: boolean; onTogglePin: 
               msg.role === 'user' ? 'bg-blue-500/80 text-white rounded-tr-sm' : 'bg-white/[0.06] text-white/85 rounded-tl-sm border border-white/5'
             }`}>
               <div className="prose prose-sm prose-invert break-words max-w-full [&_p]:my-0.5"><Markdown>{msg.text}</Markdown></div>
+              <ToolActivity events={msg.toolEvents} memoryStatus={msg.memoryStatus} />
+              {!!msg.proposedTasks?.length && !msg.proposedTasksDismissed && <div className="mt-2 space-y-2">
+                {msg.proposedTasks.map((task, index) => <button key={index} disabled={task.added}
+                  onClick={() => acceptProposedTask(msg.id, index, state.activeDate)}
+                  className="block text-left text-blue-300 disabled:opacity-40">{task.added ? '✓' : '+'} {task.name}{task.date ? ` · ${task.date}` : ''}</button>)}
+                {!msg.proposedTasks.every(t => t.added) && <button className="text-blue-300" onClick={() => acceptAllProposedTasks(msg.id, state.activeDate)}>全部应用</button>}
+              </div>}
             </div>
           </motion.div>
         ))}
         {isTyping && (
           <div className="flex items-center gap-1 px-3 py-2">
             {[0, 0.15, 0.3].map((d, i) => <span key={i} className="animate-bounce inline-block w-1 h-1 bg-blue-400 rounded-full" style={{ animationDelay: `${d}s` }} />)}
-            <button onClick={() => abortRef.current?.abort()} className="ml-2 text-[10px] text-white/40 hover:text-white/70">停止</button>
+            <button onClick={stop} className="ml-2 text-[10px] text-white/40 hover:text-white/70">停止</button>
           </div>
         )}
         <div ref={messagesEndRef} />
       </div>
 
       <div className="px-3 py-3 border-t border-white/5 shrink-0">
+        {isHelpDraft && <p className="mb-2 text-[10px] leading-relaxed text-sky-300/80">已准备求助内容，可以修改，点击发送后再一起想办法。</p>}
         <form onSubmit={handleSubmit} className="relative">
-          <input value={input} onChange={e => setInput(e.target.value)} placeholder="输入指令..."
+          <input aria-label="悬浮球对话输入" value={input} onChange={e => setInput(e.target.value)} placeholder="输入指令..."
             className="w-full bg-white/5 border border-white/8 rounded-xl px-3 py-2.5 pr-9 text-xs text-white placeholder:text-white/25 focus:ring-1 focus:ring-blue-500/50 focus:border-blue-500/30 outline-none transition-all" />
-          <button type="submit" disabled={!input.trim() || isTyping} className="absolute right-2.5 top-1/2 -translate-y-1/2 text-blue-400 hover:text-blue-300 disabled:opacity-30">
+          <button type="submit" aria-label="发送消息" disabled={!input.trim() || isTyping} className="absolute right-2.5 top-1/2 -translate-y-1/2 text-blue-400 hover:text-blue-300 disabled:opacity-30">
             <Send className="w-4 h-4" />
           </button>
         </form>

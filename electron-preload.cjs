@@ -13,6 +13,13 @@ contextBridge.exposeInMainWorld('electronAPI', {
   ballExpand: () => ipcRenderer.send('ball:expand'),
   ballCollapse: () => ipcRenderer.send('ball:collapse'),
   ballCheckSnap: () => ipcRenderer.sendSync('ball:check-snap'),
+  ballReady: () => ipcRenderer.send('ball:ready'),
+  reminderAction: (id, action, progress) => ipcRenderer.sendSync('proactive:action', id, action, progress),
+  onReminderHelp: (callback) => {
+    const listener = (_, payload) => callback(payload);
+    ipcRenderer.on('reminder:help', listener);
+    return () => ipcRenderer.removeListener('reminder:help', listener);
+  },
 
   // Window
   windowMove: (dx, dy) => ipcRenderer.send('window:move', dx, dy),
@@ -30,11 +37,25 @@ contextBridge.exposeInMainWorld('electronAPI', {
   taskCenterSnapToEdge: (edge, height) => ipcRenderer.send('taskcenter:snap-to-edge', edge, height),
   taskCenterExpandFromEdge: (edge, width, height) => ipcRenderer.send('taskcenter:expand-from-edge', edge, width, height),
   taskCenterCheckSnap: () => ipcRenderer.sendSync('taskcenter:check-snap'),
-  onTaskCenterAutoSnap: (callback) => ipcRenderer.on('taskcenter:auto-snap', (_, edge) => callback(edge)),
+  onTaskCenterAutoSnap: (callback) => {
+    const listener = (_, edge) => callback(edge);
+    ipcRenderer.on('taskcenter:auto-snap', listener);
+    return () => ipcRenderer.removeListener('taskcenter:auto-snap', listener);
+  },
 
   // Persistent store
-  storeGet: () => ipcRenderer.sendSync('store:get'),
-  storeSet: (data) => ipcRenderer.send('store:set', data),
+  storeGet: () => {
+    const result = ipcRenderer.sendSync('store:get');
+    if (result && typeof result === 'object') throw new Error(result.error || '无法读取本地数据');
+    return result;
+  },
+  storeSet: (data) => ipcRenderer.sendSync('store:set', data),
+  storeCommit: (data, base, guard) => ipcRenderer.sendSync('store:commit', data, base, guard),
+  onStoreChanged: (callback) => {
+    const listener = (_, data) => callback(data);
+    ipcRenderer.on('store:changed', listener);
+    return () => ipcRenderer.removeListener('store:changed', listener);
+  },
 
   // Data export/import
   dataExport: (password) => ipcRenderer.invoke('data:export', password),
@@ -46,6 +67,11 @@ window.onerror = (message, source, lineno, colno, error) => {
 };
 const originalConsoleError = console.error;
 console.error = (...args) => {
-  ipcRenderer.send('log-error', `[Console Error] ${args.map(a => typeof a === 'object' ? JSON.stringify(a) : a).join(' ')}`);
+  const message = args.map(value => {
+    if (value instanceof Error) return value.stack || value.message;
+    try { return typeof value === 'object' ? JSON.stringify(value) : String(value); }
+    catch { return '[unserializable error]'; }
+  }).join(' ');
+  ipcRenderer.send('log-error', `[Console Error] ${message}`);
   originalConsoleError.apply(console, args);
 };

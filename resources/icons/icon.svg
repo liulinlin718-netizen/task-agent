@@ -1,0 +1,27 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024" fill="none">
+  <title>TaskAgent</title>
+  <desc>A blue rounded tile with three white four-point stars.</desc>
+  <defs>
+    <linearGradient id="blue" x1="128" y1="112" x2="880" y2="944" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#2563EB"/>
+      <stop offset="0.54" stop-color="#3B82F6"/>
+      <stop offset="1" stop-color="#60A5FA"/>
+    </linearGradient>
+    <linearGradient id="edge" x1="512" y1="72" x2="512" y2="952" gradientUnits="userSpaceOnUse">
+      <stop stop-color="white" stop-opacity="0.28"/>
+      <stop offset="1" stop-color="white" stop-opacity="0.04"/>
+    </linearGradient>
+    <filter id="shadow" x="24" y="24" width="976" height="984" filterUnits="userSpaceOnUse" color-interpolation-filters="sRGB">
+      <feDropShadow dx="0" dy="12" stdDeviation="14" flood-color="#102957" flood-opacity="0.18"/>
+    </filter>
+  </defs>
+  <g filter="url(#shadow)">
+    <rect x="72" y="72" width="880" height="880" rx="206" fill="url(#blue)"/>
+    <rect x="74" y="74" width="876" height="876" rx="204" stroke="url(#edge)" stroke-width="4"/>
+  </g>
+  <g fill="white">
+    <path d="M474 296C496 456 538 498 698 520C538 542 496 584 474 744C452 584 410 542 250 520C410 498 452 456 474 296Z"/>
+    <path d="M724 196C736 280 760 304 844 316C760 328 736 352 724 436C712 352 688 328 604 316C688 304 712 280 724 196Z"/>
+    <path d="M280 690C288 746 304 762 360 770C304 778 288 794 280 850C272 794 256 778 200 770C256 762 272 746 280 690Z"/>
+  </g>
+</svg>

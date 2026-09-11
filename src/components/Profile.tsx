@@ -1,6 +1,7 @@
 import { useState, useCallback } from "react";
 import Cropper, { Area } from "react-easy-crop";
 import { useStore } from "../Store";
+import { MemoryPanel } from "./MemoryPanel";
 
 export function Profile() {
   const { state, setState } = useStore();
@@ -235,6 +236,7 @@ export function Profile() {
             </p>
           </div>
 
+          <MemoryPanel />
         </div>
       </div>
     </div>

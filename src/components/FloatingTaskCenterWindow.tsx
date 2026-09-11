@@ -2,7 +2,6 @@ import { useState, useRef, useEffect, useCallback } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { CheckCircle2, Plus, GripVertical, ChevronRight, ChevronLeft } from 'lucide-react';
 import { StoreProvider, useStore } from '../Store';
-import { format } from 'date-fns';
 
 function TaskCenterContent() {
   const { state, addTask, updateTask } = useStore();
@@ -15,7 +14,7 @@ function TaskCenterContent() {
   const resizeStart = useRef({ x: 0, y: 0, w: 320, h: 480 });
   const [panelSize, setPanelSize] = useState({ w: 320, h: 480 });
 
-  const today = format(new Date(), 'yyyy-MM-dd');
+  const today = state.lastRolloverDate;
   const todayTasks = state.tasks.filter(t => t.date === today);
 
   // Prevent zoom
@@ -28,7 +27,7 @@ function TaskCenterContent() {
   const dragStartScreen = useRef({ x: 0, y: 0 });
 
   useEffect(() => {
-    window.electronAPI?.onTaskCenterAutoSnap((edge) => {
+    return window.electronAPI?.onTaskCenterAutoSnap((edge) => {
       setSnappedEdge(edge);
     });
   }, []);

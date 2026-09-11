@@ -86,10 +86,10 @@ function MainLayout() {
             <User className="w-6 h-6" />
           </div>
         )}
-        <NavButton icon={<CheckSquare />} active={activeTab === "tasks"} onClick={() => setActiveTab("tasks")} />
-        <NavButton icon={<HistoryIcon />} active={activeTab === "history"} onClick={() => setActiveTab("history")} />
-        <NavButton icon={<User />} active={activeTab === "profile"} onClick={() => setActiveTab("profile")} />
-        <NavButton icon={<SettingsIcon />} active={activeTab === "settings"} onClick={() => setActiveTab("settings")} />
+        <NavButton label="任务中心" icon={<CheckSquare />} active={activeTab === "tasks"} onClick={() => setActiveTab("tasks")} />
+        <NavButton label="历史总结" icon={<HistoryIcon />} active={activeTab === "history"} onClick={() => setActiveTab("history")} />
+        <NavButton label="个人档案" icon={<User />} active={activeTab === "profile"} onClick={() => setActiveTab("profile")} />
+        <NavButton label="设置" icon={<SettingsIcon />} active={activeTab === "settings"} onClick={() => setActiveTab("settings")} />
       </div>
 
       {/* Middle Main Content */}
@@ -124,9 +124,11 @@ function MainLayout() {
   );
 }
 
-function NavButton({ icon, active, onClick }: { icon: React.ReactNode, active: boolean, onClick: () => void }) {
+function NavButton({ label, icon, active, onClick }: { label: string, icon: React.ReactNode, active: boolean, onClick: () => void }) {
   return (
     <button
+      aria-label={label}
+      title={label}
       onClick={onClick}
       className={`relative flex items-center justify-center p-3 transition-colors ${active ? "text-white" : "text-gray-400 dark:text-gray-500 hover:text-blue-600 dark:hover:text-blue-400"} w-12 h-12 rounded-xl group`}
     >

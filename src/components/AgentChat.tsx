@@ -1,296 +1,44 @@
 import { useState, useRef, useEffect } from "react";
 import { useStore } from "../Store";
-import { processAgentRequest, processAgentRequestStream, generateCustomSummary } from "../services/AgentService";
-import { extractTextFromFile } from "../services/DocumentParser";
+import { useAgentChat } from "../hooks/useAgentChat";
+import { ToolActivity } from "./ToolActivity";
 import { Send, Plus, History, X, MessageSquare, Trash2, RefreshCw, ArrowLeft, Paperclip } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 import Markdown from "react-markdown";
 
 export function AgentChat() {
-  const { state, addTask, updateTask, deleteTask, addChatMessage, updateChatMessage, appendChatMessageText, deleteChatMessage, acceptProposedTask, acceptAllProposedTasks, dismissProposedTasks, updateMessageProposedTasks, setActiveDate, setState, createNewChat, setActiveChatSession, deleteChatSession, updateChatSessionTitle, addReport } = useStore();
+  const { state, acceptProposedTask, acceptAllProposedTasks, dismissProposedTasks, setState, createNewChat, setActiveChatSession, deleteChatSession } = useStore();
+  const { busy: isTyping, send, regenerate, stop: handleStopGenerating } = useAgentChat();
   const [input, setInput] = useState("");
-  const [isTyping, setIsTyping] = useState(false);
   const [showHistory, setShowHistory] = useState(false);
   const [refreshingMsgId, setRefreshingMsgId] = useState<string | null>(null);
+  const [regeneratingMsgId, setRegeneratingMsgId] = useState<string | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
-  const abortControllerRef = useRef<AbortController | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [pendingFile, setPendingFile] = useState<{ file: File; name: string } | null>(null);
-
-  const handleAttachFile = (file: File) => {
-    if (isTyping) return;
-    setPendingFile({ file, name: file.name });
-  };
-
-  const removePendingFile = () => setPendingFile(null);
-
   const currentSession = state.chatSessions.find(cs => cs.id === state.activeChatSessionId) || state.chatSessions[0];
 
-  useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [currentSession?.messages, isTyping]);
-
-  const handleStopGenerating = () => {
-    if (abortControllerRef.current) {
-      abortControllerRef.current.abort();
-      abortControllerRef.current = null;
-    }
-  };
-
-  const [regeneratingMsgId, setRegeneratingMsgId] = useState<string | null>(null);
-
+  useEffect(() => { messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' }); }, [currentSession?.messages, isTyping]);
+  const handleAttachFile = (file: File) => { if (!isTyping) setPendingFile({ file, name: file.name }); };
+  const removePendingFile = () => setPendingFile(null);
   const handleRegenerateMessage = async (messageId: string) => {
-    const msgs = currentSession?.messages || [];
-    const idx = msgs.findIndex(m => m.id === messageId);
-    if (idx === -1) return;
-    
-    // Find the immediately preceding user message
-    let userText = "";
-    for (let i = idx - 1; i >= 0; i--) {
-      if (msgs[i].role === 'user') {
-        userText = msgs[i].text;
-        break;
-      }
-    }
-    
-    if (!userText) return;
-
+    if (isTyping) return;
     setRegeneratingMsgId(messageId);
-
-    const abortController = new AbortController();
-    abortControllerRef.current = abortController;
-
-    try {
-      // Create a temporary state that excludes the message we are regenerating
-      // This ensures AgentService doesn't see the old message in previousHistory
-      const fakeState = {
-        ...state,
-        chatSessions: state.chatSessions.map(cs => 
-          cs.id === state.activeChatSessionId 
-            ? { ...cs, messages: cs.messages.filter(m => m.id !== messageId) }
-            : cs
-        )
-      };
-
-      const res = await processAgentRequest(userText, fakeState, abortController.signal);
-      
-      let replyText = res.data.reply || "";
-      let proposedTasks: {name: string, added: boolean}[] | undefined = undefined;
-
-      if (res.intent === "add_tasks" && res.data.proposedTasks && res.data.proposedTasks.length > 0) {
-        replyText = replyText || "好的，为你生成了以下规划，请确认是否并入任务表：";
-        proposedTasks = res.data.proposedTasks.map(name => ({name, added: false}));
-        if (res.data.targetDate && res.data.targetDate !== state.activeDate) {
-          setActiveDate(res.data.targetDate);
-        }
-      } else if (res.intent === "update_task" && res.data.taskId) {
-        const updates: any = {};
-        if (res.data.progress !== undefined) updates.progress = res.data.progress;
-        if (res.data.date) updates.date = res.data.date;
-        if (res.data.notes) updates.notes = res.data.notes;
-        if (res.data.priority) updates.priority = res.data.priority;
-        updateTask(res.data.taskId, updates);
-        const taskName = state.tasks.find(t => t.id === res.data.taskId)?.name || "任务";
-        replyText = replyText || `已更新 **${taskName}**。`;
-      } else if (res.intent === "delete_task" && res.data.taskId) {
-        const taskName = state.tasks.find(t => t.id === res.data.taskId)?.name || "任务";
-        deleteTask(res.data.taskId);
-        replyText = replyText || `已删除任务：**${taskName}**。`;
-      } else if (res.intent === "decompose" && res.data.proposedTasks && res.data.proposedTasks.length > 0) {
-        const taskName = state.tasks.find(t => t.id === res.data.taskId)?.name || "该任务";
-        replyText = replyText || `这是 **${taskName}** 的拆解步骤，请确认需要添加哪些进度：`;
-        proposedTasks = res.data.proposedTasks.map(name => ({name, added: false}));
-      }
-
-      updateChatMessage(messageId, { text: replyText, proposedTasks, proposedTasksTargetDate: res.data.targetDate, proposedTasksDismissed: false });
-    } catch (e: any) {
-      if (e.name === 'AbortError' || e.message?.includes('abort')) {
-        console.log('Request aborted by user');
-        updateChatMessage(messageId, { text: "已停止生成。" });
-      } else {
-        console.error(e);
-        updateChatMessage(messageId, { text: e.message || "抱歉，处理您的请求时出错。" });
-      }
-    } finally {
-      setRegeneratingMsgId(null);
-      abortControllerRef.current = null;
-    }
+    try { await regenerate(messageId); } finally { setRegeneratingMsgId(null); }
   };
-
   const handleRefreshTasks = async (messageId: string) => {
+    if (isTyping) return;
     setRefreshingMsgId(messageId);
-    try {
-      const msgs = currentSession?.messages || [];
-      const idx = msgs.findIndex(m => m.id === messageId);
-      let prevText = "请给我更多建议";
-      if (idx > 0 && msgs[idx-1].role === 'user') {
-        prevText = msgs[idx-1].text;
-      }
-      const res = await processAgentRequest(`针对我之前的请求：“${prevText}”，请提供三个**完全不同**的新任务建议。`, state);
-      if (res.intent === "add_tasks" && res.data.proposedTasks && res.data.proposedTasks.length > 0) {
-        updateMessageProposedTasks(messageId, res.data.proposedTasks);
-      } else if (res.intent === "decompose" && res.data.proposedTasks && res.data.proposedTasks.length > 0) {
-        updateMessageProposedTasks(messageId, res.data.proposedTasks);
-      }
-    } catch (e: any) {
-      console.error(e);
-    } finally {
-      setRefreshingMsgId(null);
-    }
+    try { await regenerate(messageId, true); } finally { setRefreshingMsgId(null); }
   };
-
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    const hasFile = !!pendingFile;
-    if (!input.trim() && !hasFile) return;
-    if (isTyping) return;
-
-    let userText = input.trim();
-    let fileContent = "";
-    const attachedFileName = pendingFile?.name || "";
-
-    // Extract file content if attached
-    if (pendingFile) {
-      try {
-        fileContent = await extractTextFromFile(pendingFile.file);
-      } catch (err: any) {
-        addChatMessage("user", `📎 ${attachedFileName}`);
-        addChatMessage("model", `文档解析失败: ${err.message || "未知错误"}`);
-        setPendingFile(null);
-        return;
-      }
-    }
-
-    // Build display text and LLM prompt
-    const displayText = hasFile
-      ? `📎 ${attachedFileName}${userText ? `\n${userText}` : ""}`
-      : userText;
-    const llmPrompt = hasFile
-      ? `[用户上传了文件: ${attachedFileName}]\n\n文档内容（前8000字）:\n${fileContent.slice(0, 8000)}${userText ? `\n\n用户指令: ${userText}` : "\n\n请从文档中提取所有待办事项和任务。"}`
-      : userText;
-
-    setInput("");
-    setPendingFile(null);
-    addChatMessage("user", displayText);
-    setIsTyping(true);
-
-    const abortController = new AbortController();
-    abortControllerRef.current = abortController;
-
-    try {
-      // Create a placeholder message for streaming
-      addChatMessage("model", "");
-
-      const res = await processAgentRequestStream(
-        llmPrompt, state,
-        (chunk) => {
-          // Typewriter effect: append text to the last model message
-          appendChatMessageText(chunk);
-        },
-        abortController.signal,
-        // Rolling summary callback — update session in background
-        (summary, summarizedUpTo) => {
-          setState(s => {
-            const idx = s.chatSessions.findIndex(cs => cs.id === s.activeChatSessionId);
-            if (idx === -1) return s;
-            const sessions = [...s.chatSessions];
-            sessions[idx] = { ...sessions[idx], summary, summarizedUpTo };
-            return { ...s, chatSessions: sessions };
-          });
-        }
-      );
-
-      if (res.intent === "chat") {
-        // Reply was already typewriter-rendered into the placeholder message
-      } else if (res.intent === "add_tasks" && res.data.proposedTasks && res.data.proposedTasks.length > 0) {
-        const firstTaskName = res.data.proposedTasks[0];
-        const targetDate = res.data.targetDate || state.activeDate;
-        addTask(firstTaskName, targetDate);
-        // Update the placeholder message to include proposedTasks for confirmation UI
-        // Use setState callback to read the LATEST state (closure state is stale)
-        setState(s => {
-          const session = s.chatSessions.find(cs => cs.id === s.activeChatSessionId);
-          const msgs = session?.messages || [];
-          const lastMsg = msgs[msgs.length - 1];
-          if (lastMsg && lastMsg.role === 'model') {
-            updateMessageProposedTasks(lastMsg.id, res.data.proposedTasks!);
-          }
-          return s; // no state change, just reading
-        });
-        if (res.data.targetDate && res.data.targetDate !== state.activeDate) {
-          setActiveDate(res.data.targetDate);
-        }
-      } else if (res.intent === "update_task" && res.data.taskId) {
-        const task = state.tasks.find(t => t.id === res.data.taskId);
-        if (!task) {
-          // Reply already shown via typewriter; no action needed
-        } else {
-          const updates: any = {};
-          if (res.data.progress !== undefined) {
-            updates.progress = Math.max(0, Math.min(100, res.data.progress));
-          }
-          if (res.data.date) updates.date = res.data.date;
-          if (res.data.notes) updates.notes = res.data.notes;
-          if (res.data.priority) updates.priority = res.data.priority;
-          updateTask(res.data.taskId, updates);
-          // Reply already shown via typewriter
-        }
-      } else if (res.intent === "delete_task" && res.data.taskId) {
-        const task = state.tasks.find(t => t.id === res.data.taskId);
-        if (task) {
-          deleteTask(res.data.taskId);
-        }
-        // Reply already shown via typewriter
-      } else if (res.intent === "generate_report" && res.data.startDate && res.data.endDate) {
-        // Reply already shown via typewriter (e.g. "正在为你生成报告...")
-        try {
-          const dates: string[] = [];
-          let d = new Date(res.data.startDate);
-          const end = new Date(res.data.endDate);
-          while (d <= end) {
-            dates.push(d.toISOString().split('T')[0]);
-            d.setDate(d.getDate() + 1);
-          }
-          const report = await generateCustomSummary(dates, state);
-          addChatMessage("model", report);
-          addReport(`${res.data.startDate} ~ ${res.data.endDate} 报告`, dates, report);
-        } catch (reportErr: any) {
-          addChatMessage("model", `报告生成失败：${reportErr.message || '请检查 API 配置。'}`);
-        }
-      } else if (res.intent === "decompose" && res.data.proposedTasks && res.data.proposedTasks.length > 0) {
-        const task = state.tasks.find(t => t.id === res.data.taskId);
-        if (task) {
-          // Update the placeholder message to include proposedTasks
-          setState(s => {
-            const session = s.chatSessions.find(cs => cs.id === s.activeChatSessionId);
-            const msgs = session?.messages || [];
-            const lastMsg = msgs[msgs.length - 1];
-            if (lastMsg && lastMsg.role === 'model') {
-              updateMessageProposedTasks(lastMsg.id, res.data.proposedTasks!);
-            }
-            return s;
-          });
-        }
-      }
-
-      if (res.data.chatTitle && res.data.chatTitle.length > 0) {
-        updateChatSessionTitle(state.activeChatSessionId, res.data.chatTitle);
-      }
-    } catch (e: any) {
-      if (e.name === 'AbortError' || e.message?.includes('abort')) {
-        console.log('Request aborted by user');
-        addChatMessage("model", "已停止生成。");
-      } else if (e.message?.includes('超时')) {
-        addChatMessage("model", "网络超时，请检查网络连接后重试。");
-      } else {
-        console.error(e);
-        addChatMessage("model", e.message || "抱歉，处理您的请求时出错。");
-      }
-    } finally {
-      setIsTyping(false);
-      abortControllerRef.current = null;
-    }
+    if (isTyping || (!input.trim() && !pendingFile)) return;
+    const text = input.trim();
+    const file = pendingFile?.file;
+    setInput(""); setPendingFile(null);
+    await send(text, file);
   };
 
   const updateAgentStyle = (style: 'academic' | 'gentle' | 'strict') => {
@@ -382,10 +130,10 @@ export function AgentChat() {
           <AnimatePresence>
             {currentSession?.messages.map((msg, i) => {
               // Skip empty model messages (streaming placeholder before text arrives)
-              if (msg.role === "model" && !msg.text && !msg.proposedTasks?.length) return null;
+              if (msg.role === "model" && !msg.text && !msg.proposedTasks?.length && !msg.toolEvents?.length) return null;
               return (
               <motion.div 
-                key={i} 
+                key={msg.id}
                 initial={{ opacity: 0, y: 10, scale: 0.95 }}
                 animate={{ opacity: 1, y: 0, scale: 1 }}
                 transition={{ type: "spring", stiffness: 260, damping: 20 }}
@@ -400,13 +148,14 @@ export function AgentChat() {
                 >
                   <div className="markdown-body prose prose-sm dark:prose-invert break-words max-w-full prose-pre:max-w-full prose-pre:overflow-x-auto">
                     <Markdown>{msg.text}</Markdown>
+                    <ToolActivity events={msg.toolEvents} memoryStatus={msg.memoryStatus} />
                   </div>
                   {msg.proposedTasks && msg.proposedTasks.length > 0 && !msg.proposedTasksDismissed && (
                     <div className="mt-3 space-y-2 border-t border-gray-100 dark:border-neutral-700 pt-3">
                       <div className="flex items-center justify-between xl:mb-2">
                         <span className="text-xs text-gray-500 font-medium">推荐任务</span>
                         <button 
-                          disabled={refreshingMsgId === msg.id}
+                          disabled={isTyping}
                           onClick={() => handleRefreshTasks(msg.id)}
                           className="flex items-center gap-1 px-2 py-1 text-xs text-gray-500 hover:text-gray-700 dark:hover:text-gray-300 hover:bg-gray-100 dark:hover:bg-neutral-800 rounded transition-colors disabled:opacity-50"
                         >
@@ -419,12 +168,13 @@ export function AgentChat() {
                           <div key={taskIndex} className="group/task flex items-center gap-2 text-xs">
                             <div className={`w-1 h-1 rounded-full ${pt.added ? 'bg-gray-300 dark:bg-gray-600' : 'bg-blue-400'}`}></div>
                             <span className={`font-medium flex-1 truncate transition-colors ${pt.added ? 'text-gray-400 dark:text-gray-500' : 'text-gray-700 dark:text-gray-300'}`}>
-                              {pt.name}
+                              {pt.name}{pt.date ? ` · ${pt.date}` : ''}
                             </span>
                             <button
+                              disabled={pt.added}
                               onClick={() => acceptProposedTask(msg.id, taskIndex, state.activeDate)}
                               className="p-1 rounded-md text-gray-400 hover:text-blue-500 hover:bg-gray-100 dark:hover:bg-neutral-700 transition-colors shrink-0 opacity-0 group-hover/task:opacity-100 focus:opacity-100"
-                              title="添加到任务中心"
+                              title={pt.added ? "已添加" : "添加到任务中心"}
                             >
                               <ArrowLeft className="w-3.5 h-3.5" />
                             </button>
@@ -523,6 +273,7 @@ export function AgentChat() {
         <form onSubmit={handleSubmit} className="relative flex items-center gap-2">
           <input
             ref={fileInputRef}
+            aria-label="上传文档"
             type="file"
             accept=".txt,.docx,.pdf"
             className="hidden"
@@ -538,12 +289,13 @@ export function AgentChat() {
             <Paperclip className="w-4 h-4" />
           </button>
           <input
+            aria-label="对话输入"
             value={input}
             onChange={e => setInput(e.target.value)}
             placeholder={pendingFile ? `对 ${pendingFile.name} 说点什么...` : "输入指令..."}
             className="flex-1 bg-white dark:bg-neutral-800 border border-gray-200 dark:border-neutral-700 rounded-2xl px-4 py-3 pr-10 text-sm focus:ring-2 focus:ring-blue-100 dark:focus:ring-blue-900/30 focus:border-blue-400 transition-all outline-none text-foreground placeholder:text-gray-400"
           />
-          <button type="submit" disabled={(!input.trim() && !pendingFile) || isTyping} className="absolute right-3 bottom-0 top-0 m-auto text-blue-600 dark:text-blue-400 hover:text-blue-700 dark:hover:text-blue-300 disabled:opacity-50">
+          <button type="submit" aria-label="发送消息" disabled={(!input.trim() && !pendingFile) || isTyping} className="absolute right-3 bottom-0 top-0 m-auto text-blue-600 dark:text-blue-400 hover:text-blue-700 dark:hover:text-blue-300 disabled:opacity-50">
             <Send className="w-5 h-5" />
           </button>
         </form>
