@@ -2,7 +2,6 @@ import { useState, useRef, useEffect, useCallback } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { CheckCircle2, Plus, GripVertical, ChevronRight, ChevronLeft } from 'lucide-react';
 import { StoreProvider, useStore } from '../Store';
-import { format } from 'date-fns';
 
 function TaskCenterContent() {
   const { state, addTask, updateTask } = useStore();
@@ -15,7 +14,7 @@ function TaskCenterContent() {
   const resizeStart = useRef({ x: 0, y: 0, w: 320, h: 480 });
   const [panelSize, setPanelSize] = useState({ w: 320, h: 480 });
 
-  const today = format(new Date(), 'yyyy-MM-dd');
+  const today = state.lastRolloverDate;
   const todayTasks = state.tasks.filter(t => t.date === today);
 
   // Prevent zoom
@@ -28,7 +27,7 @@ function TaskCenterContent() {
   const dragStartScreen = useRef({ x: 0, y: 0 });
 
   useEffect(() => {
-    window.electronAPI?.onTaskCenterAutoSnap((edge) => {
+    return window.electronAPI?.onTaskCenterAutoSnap((edge) => {
       setSnappedEdge(edge);
     });
   }, []);
@@ -129,20 +128,18 @@ function TaskCenterContent() {
     return (
       <div
         onMouseEnter={handleEdgeHover}
-        className="w-full h-full flex items-center justify-center cursor-pointer"
-        style={{ background: 'transparent' }}
+        className="w-full h-full cursor-pointer flex"
+        style={{ background: 'transparent', justifyContent: snappedEdge === 'right' ? 'flex-end' : 'flex-start' }}
       >
-        <motion.div
-          initial={{ opacity: 0 }}
-          animate={{ opacity: 1 }}
-          className="w-full h-full flex items-center justify-center"
+        <div
           style={{
-            background: 'linear-gradient(180deg, rgba(37,99,235,0.6) 0%, rgba(59,130,246,0.35) 100%)',
+            width: '3px',
+            height: '100%',
+            background: 'linear-gradient(180deg, #3b82f6 0%, #2563eb 50%, #3b82f6 100%)',
             borderRadius: snappedEdge === 'right' ? '3px 0 0 3px' : '0 3px 3px 0',
+            opacity: 0.6,
           }}
-        >
-          {snappedEdge === 'right' ? <ChevronLeft className="w-3 h-3 text-white/80" /> : <ChevronRight className="w-3 h-3 text-white/80" />}
-        </motion.div>
+        />
       </div>
     );
   }
@@ -157,15 +154,15 @@ function TaskCenterContent() {
       onMouseLeave={handlePanelLeave}
       className="w-full h-full flex flex-col rounded-2xl overflow-hidden relative"
       style={{
-        background: 'rgba(15,15,20,0.90)',
+        background: 'rgba(15,15,20,0.96)',
         backdropFilter: 'blur(24px)',
         border: '1px solid rgba(255,255,255,0.08)',
         boxShadow: '0 8px 40px rgba(0,0,0,0.5)',
       }}
     >
       {/* Header */}
-      <div 
-        onMouseDown={handleMouseDown} 
+      <div
+        onMouseDown={handleMouseDown}
         className="flex items-center justify-between px-4 py-2.5 border-b border-white/5 shrink-0 cursor-move"
       >
         <div className="flex items-center gap-2">
@@ -216,16 +213,26 @@ function TaskCenterContent() {
   );
 }
 
-// --- Task Card with wheel scroll progress ---
+// --- Task Card with wheel scroll progress (only on progress ring area) ---
 function TaskCard({ task, index, updateTask }: { task: any; index: number; updateTask: (id: string, u: any) => void }) {
-  const handleWheel = (e: React.WheelEvent) => {
-    e.stopPropagation();
-    if (e.deltaY < 0) {
-      updateTask(task.id, { progress: Math.min(task.progress + 1, 100) });
-    } else {
-      updateTask(task.id, { progress: Math.max(task.progress - 1, 0) });
-    }
-  };
+  const progressRef = useRef<HTMLDivElement>(null);
+
+  // Use native event listener with { passive: false } to allow preventDefault
+  useEffect(() => {
+    const el = progressRef.current;
+    if (!el) return;
+    const handler = (e: WheelEvent) => {
+      e.preventDefault(); // prevent page scroll when hovering progress area
+      e.stopPropagation();
+      if (e.deltaY < 0) {
+        updateTask(task.id, { progress: Math.min(task.progress + 1, 100) });
+      } else {
+        updateTask(task.id, { progress: Math.max(task.progress - 1, 0) });
+      }
+    };
+    el.addEventListener('wheel', handler, { passive: false });
+    return () => el.removeEventListener('wheel', handler);
+  }, [task.id, task.progress, updateTask]);
 
   return (
     <motion.div
@@ -234,11 +241,13 @@ function TaskCard({ task, index, updateTask }: { task: any; index: number; updat
       exit={{ opacity: 0, x: 8 }}
       transition={{ delay: index * 0.02 }}
       className="flex items-center gap-2.5 px-3 py-2.5 rounded-xl bg-white/[0.03] hover:bg-white/[0.06] border border-white/[0.04] transition-all"
-      onWheel={handleWheel}
-      title="滚动滚轮更改进度"
     >
-      {/* Progress ring */}
-      <div className="relative w-7 h-7 shrink-0 select-none">
+      {/* Progress ring — scroll here to change progress */}
+      <div
+        ref={progressRef}
+        className="relative w-7 h-7 shrink-0 select-none cursor-ns-resize"
+        title="滚动滚轮更改进度"
+      >
         <svg className="w-7 h-7 -rotate-90" viewBox="0 0 28 28">
           <circle cx="14" cy="14" r="11" fill="none" stroke="rgba(255,255,255,0.06)" strokeWidth="2.5" />
           <circle cx="14" cy="14" r="11" fill="none"
@@ -256,10 +265,9 @@ function TaskCard({ task, index, updateTask }: { task: any; index: number; updat
       <div className="flex-1 min-w-0">
         <div className={`text-xs font-medium truncate ${task.progress >= 100 ? 'text-white/30 line-through' : 'text-white/80'}`}>{task.name}</div>
         {task.priority && (
-          <span className={`text-[9px] mt-0.5 inline-block px-1.5 py-0.5 rounded-full font-medium ${
-            task.priority === 'high' ? 'bg-red-500/15 text-red-400' :
+          <span className={`text-[9px] mt-0.5 inline-block px-1.5 py-0.5 rounded-full font-medium ${task.priority === 'high' ? 'bg-red-500/15 text-red-400' :
             task.priority === 'medium' ? 'bg-amber-500/15 text-amber-400' : 'bg-blue-500/15 text-blue-400'
-          }`}>{task.priority === 'high' ? '高' : task.priority === 'medium' ? '中' : '低'}</span>
+            }`}>{task.priority === 'high' ? '高' : task.priority === 'medium' ? '中' : '低'}</span>
         )}
       </div>
     </motion.div>

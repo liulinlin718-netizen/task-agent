@@ -1,0 +1,34 @@
+name: 问题反馈
+description: 报告安装、任务管理或桌面助手中的问题
+title: "[Bug] "
+body:
+  - type: input
+    id: version
+    attributes:
+      label: TaskAgent 版本
+      placeholder: "例如：2.1.0"
+    validations:
+      required: true
+  - type: dropdown
+    id: platform
+    attributes:
+      label: 运行平台
+      options:
+        - macOS Apple Silicon
+        - macOS Intel
+        - Windows x64
+        - 浏览器预览
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: 复现步骤与实际结果
+      description: 请描述如何触发问题，以及原本期望的行为。
+    validations:
+      required: true
+  - type: textarea
+    id: details
+    attributes:
+      label: 补充信息
+      description: 可附操作系统版本、截图或脱敏日志；模型相关问题请提供供应商和模型名称，不要提交 API Key 或个人任务内容。

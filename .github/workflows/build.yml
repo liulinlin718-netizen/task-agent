@@ -2,103 +2,110 @@ name: Build & Release
 
 on:
   push:
-    tags:
-      - 'v*'
+    tags: ['v*']
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
 
 jobs:
-  build-windows:
-    runs-on: windows-latest
+  verify:
+    uses: ./.github/workflows/check.yml
+
+  package:
+    name: Package ${{ matrix.target }}
+    needs: verify
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: mac-arm64
+            os: macos-15
+            arch: arm64
+            command: npm run build:mac -- --arm64 --publish never
+            executable: release/mac-arm64/TaskAgent.app/Contents/MacOS/TaskAgent
+          - target: mac-x64
+            os: macos-15-intel
+            arch: x64
+            command: npm run build:mac -- --x64 --publish never
+            executable: release/mac/TaskAgent.app/Contents/MacOS/TaskAgent
+          - target: win-x64
+            os: windows-2025
+            arch: x64
+            command: npm run build:exe -- --x64 --publish never
+            executable: release/win-unpacked/TaskAgent.exe
+    runs-on: ${{ matrix.os }}
+    env:
+      RELEASE_TAG: ${{ github.ref_name }}
+      CSC_IDENTITY_AUTO_DISCOVERY: 'false'
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          node-version: 22
-
-      - name: Remove China mirror config
-        run: |
-          echo "" > .npmrc
-
-      - name: Install dependencies
-        run: npm install
-
-      - name: Build Windows installer
-        # 加上 -p never 禁用 electron-builder 的自动发布逻辑
-        run: npm run build:exe -- -p never
-
-      - name: Upload Windows artifact
-        uses: actions/upload-artifact@v4
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          name: windows-installer
-          path: release/*.exe
-
-  build-macos:
-    runs-on: macos-latest
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: 22
-
-      - name: Remove China mirror config
-        run: |
-          echo "" > .npmrc
-
-      - name: Install dependencies
-        run: npm install
+          node-version: '22'
+          architecture: ${{ matrix.arch }}
+          cache: npm
+      - name: Verify release version and changelog
+        run: node scripts/release.mjs preflight
+      - run: npm ci
+      - run: npm run setup:electron
+      - name: Build native installers without publishing
+        run: ${{ matrix.command }}
+      - name: Verify packaged executable architecture
+        run: node scripts/release.mjs executable ${{ matrix.target }} "${{ matrix.executable }}"
+      - name: Test packaged application with isolated profiles and local model fixtures
+        run: npm run test:e2e
         env:
-          npm_config_platform: darwin
-          npm_config_arch: x64
-
-      - name: Rebuild native modules for Electron
-        run: npx electron-rebuild || true
-
-      - name: Build macOS installer
-        # 加上 -p never 禁用 electron-builder 的自动发布逻辑
-        run: npm run build:mac -- -p never
-        env:
-          CSC_IDENTITY_AUTO_DISCOVERY: false
-          DEBUG: electron-builder
-
-      - name: List release output
-        if: always()
-        run: ls -la release/ || echo "No release directory"
-
-      - name: Upload macOS artifact
-        uses: actions/upload-artifact@v4
+          TASKAGENT_E2E_EXECUTABLE: ${{ github.workspace }}/${{ matrix.executable }}
+      - name: Validate and hash installers
+        run: node scripts/release.mjs stage ${{ matrix.target }}
+      - name: Preserve packaged test failure evidence
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: macos-installer
-          path: |
-            release/*.dmg
-            release/*.zip
+          name: test-failure-${{ matrix.target }}
+          path: test-results/
+          if-no-files-found: ignore
+          retention-days: 7
+      - name: Upload verified installers and manifest
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: release-${{ matrix.target }}
+          path: release/staging/${{ matrix.target }}/
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 14
 
-  release:
-    needs: [build-windows, build-macos]
-    runs-on: ubuntu-latest
+  publish:
+    name: Verify all assets and publish once
+    needs: [verify, package]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
     permissions:
       contents: write
+    env:
+      RELEASE_TAG: ${{ github.ref_name }}
     steps:
-      - name: Download Windows artifact
-        uses: actions/download-artifact@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          name: windows-installer
-          path: artifacts/
-
-      - name: Download macOS artifact
-        uses: actions/download-artifact@v4
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          name: macos-installer
-          path: artifacts/
-
-      - name: Create GitHub Release
-        uses: softprops/action-gh-release@v2
+          node-version: '22'
+          package-manager-cache: false
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
-          # 使用内置的 GITHUB_TOKEN 进行发布
-          token: ${{ secrets.GITHUB_TOKEN }}
-          files: artifacts/*
-          generate_release_notes: true
+          pattern: release-*
+          path: release/downloads/
+      - name: Verify complete asset set and create SHA256SUMS
+        run: node scripts/release.mjs aggregate
+      - name: Upload to draft, verify uploaded bytes, then publish
+        run: node scripts/release.mjs publish
+        env:
+          GH_TOKEN: ${{ github.token }}

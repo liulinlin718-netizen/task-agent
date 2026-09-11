@@ -6,4 +6,12 @@ coverage/
 .DS_Store
 *.log
 .env*
-!.env.example
+
+test-results/
+playwright-report/
+
+# Local editor and coding-assistant configuration
+.vscode/
+.claude/
+.gemini/
+.codex/
