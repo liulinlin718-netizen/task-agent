@@ -79,7 +79,7 @@ async function settings(desktop: Desktop, patch: Partial<AppState['settings']>) 
   expect(result).not.toBeNull();
 }
 
-test('stale progress proactively opens a non-focusing card while the main window is hidden, and saves offline', async ({ desktop }, info) => {
+test('stale progress proactively opens a non-focusing nudge while the main window is hidden, and saves offline', async ({ desktop }, info) => {
   const ball = await desktop.ball();
   await desktop.app.evaluate(async ({ BrowserWindow }) => {
     const main = BrowserWindow.getAllWindows().find(win => !win.webContents.getURL().includes('window='));
@@ -90,17 +90,40 @@ test('stale progress proactively opens a non-focusing card while the main window
   });
   await expect.poll(() => desktop.app.evaluate(({ BrowserWindow }) => BrowserWindow.getFocusedWindow()?.webContents.getURL().startsWith('data:'))).toBe(true);
   await settings(desktop, { proactiveEnabled: true });
-  await expect(ball.getByRole('button', { name: '保存进度', exact: true })).toBeVisible();
-  await expect.poll(() => ball.evaluate(() => window.electronAPI!.windowGetBounds().width)).toBe(360);
+  await expect(ball.getByRole('button', { name: '展开任务进度提醒', exact: true })).toBeVisible();
+  await expect(ball.getByRole('button', { name: '提醒中的桌宠', exact: true })).toBeVisible();
+  await expect(ball.getByRole('button', { name: '保存进度', exact: true })).toHaveCount(0);
+  await expect.poll(() => ball.evaluate(() => window.electronAPI!.windowGetBounds().width)).toBe(328);
   const windows = await desktop.app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().map(win => ({ url: win.webContents.getURL(), focused: win.isFocused(), visible: win.isVisible(), bounds: win.getBounds() })));
-  expect(windows.find(win => win.url.includes('window=ball'))).toMatchObject({ focused: false, visible: true, bounds: { width: 360, height: 360 } });
+  expect(windows.find(win => win.url.includes('window=ball'))).toMatchObject({ focused: false, visible: true, bounds: { width: 328, height: 112 } });
   expect(windows.find(win => win.url.startsWith('data:'))?.focused).toBe(true);
   expect(windows.find(win => /^(file|http):/.test(win.url) && !win.url.includes('window='))?.visible).toBe(false);
+  await ball.screenshot({ path: info.outputPath('proactive-nudge.png') });
+  await ball.getByRole('button', { name: '展开任务进度提醒', exact: true }).click();
+  await expect.poll(() => ball.evaluate(() => window.electronAPI!.windowGetBounds().height)).toBe(380);
   await expect(ball.getByText('论文初稿', { exact: true })).toBeVisible();
+  expect((await desktop.read()).proactive?.count).toBe(1);
+  expect(await ball.getByRole('region', { name: '任务进度提醒' }).evaluate(element => element.scrollHeight <= element.clientHeight)).toBe(true);
   await ball.screenshot({ path: info.outputPath('proactive-reminder.png') });
   const prior = (await desktop.read()).tasks[0].lastProgressAt!;
-  await ball.getByRole('spinbutton', { name: '提醒任务进度' }).fill('45');
-  await ball.getByRole('button', { name: '保存进度', exact: true }).click();
+  const slider = ball.getByRole('slider', { name: '提醒任务进度' });
+  await expect(slider).toHaveValue('20');
+  const bounds = await ball.evaluate(() => window.electronAPI!.windowGetBounds());
+  const track = (await slider.boundingBox())!;
+  await ball.mouse.move(track.x + 10 + (track.width - 20) * 0.2, track.y + track.height / 2);
+  await ball.mouse.down();
+  await ball.mouse.move(track.x + 10 + (track.width - 20) * 0.45, track.y + track.height / 2, { steps: 8 });
+  await expect(slider).toHaveValue('45');
+  await expect(ball.getByLabel('当前进度', { exact: true })).toHaveText('当前进度 45%');
+  await expect(ball.getByRole('slider')).toHaveCount(1);
+  await expect(ball.getByRole('button', { name: '保存进度', exact: true })).toHaveCount(0);
+  for (const label of ['完成了', '推进了一点', '还没变化']) {
+    await expect(ball.getByRole('button', { name: label, exact: true })).toHaveText(label);
+  }
+  expect((await desktop.read()).tasks[0].progress).toBe(20);
+  expect(await ball.evaluate(() => window.electronAPI!.windowGetBounds())).toEqual(bounds);
+  await ball.screenshot({ path: info.outputPath('proactive-slider.png') });
+  await ball.mouse.up();
   await expect.poll(async () => (await desktop.read()).tasks[0].progress).toBe(45);
   expect(Date.parse((await desktop.read()).tasks[0].lastProgressAt!)).toBeGreaterThan(Date.parse(prior));
   await expect.poll(async () => (await desktop.read()).proactive?.active).toBeUndefined();
@@ -116,9 +139,10 @@ test('snoozing persists across a complete process restart', async ({ desktop }) 
   let ball = await desktop.ball();
   await ball.getByRole('button', { name: '30分钟后提醒', exact: true }).click();
   const snooze = (await desktop.read()).proactive!;
-  expect(Date.parse(snooze.snoozedUntil!)).toBeGreaterThan(Date.now() + 29 * 60_000);
+  expect(Date.parse(snooze.taskStates!['stale-paper'].snoozedUntil!)).toBeGreaterThan(Date.now() + 29 * 60_000);
   await desktop.restart();
-  expect((await desktop.read()).proactive?.snoozedUntil).toBe(snooze.snoozedUntil);
+  expect((await desktop.read()).proactive?.taskStates?.['stale-paper'].snoozedUntil).toBe(snooze.taskStates!['stale-paper'].snoozedUntil);
+  expect((await desktop.read()).proactive?.taskStates?.['stale-paper'].snoozeCount).toBe(1);
   expect((await desktop.read()).proactive?.count).toBe(1);
   ball = await desktop.ball();
   await expect(ball.getByRole('button', { name: '打开悬浮球对话' })).toBeVisible();
@@ -126,6 +150,7 @@ test('snoozing persists across a complete process restart', async ({ desktop }) 
 
 test('today dismissal survives restart and task changes cannot bypass it', async ({ desktop }) => {
   await settings(desktop, { proactiveEnabled: true });
+  await (await desktop.ball()).getByRole('button', { name: '展开任务进度提醒', exact: true }).click();
   await (await desktop.ball()).getByRole('button', { name: '今天先休息', exact: true }).click();
   const state = await desktop.read();
   expect(state.proactive?.dismissedDate).toBe(state.activeDate);
@@ -148,8 +173,11 @@ test('today dismissal survives restart and task changes cannot bypass it', async
 test('stuck guidance enters the shared chat with the actual task and waits for the user to send', async ({ desktop }, info) => {
   await settings(desktop, { proactiveEnabled: true });
   const ball = await desktop.ball();
+  await ball.getByRole('button', { name: '展开任务进度提醒', exact: true }).click();
   await ball.getByRole('button', { name: '有点卡住了', exact: true }).click();
   const input = ball.getByRole('textbox', { name: '悬浮球对话输入', exact: true });
+  await expect(ball.getByRole('combobox', { name: '当前关联任务与日期' })).toHaveValue('stale-paper');
+  await expect(ball.getByText(`正在聊：论文初稿 · ${(await desktop.read()).activeDate}`, { exact: true })).toBeVisible();
   await expect(input).toHaveValue(/论文初稿/);
   await expect(input).toHaveValue(/日期：.*当前进度：20%/);
   await expect(input).not.toHaveValue(/stale-paper/);
@@ -159,6 +187,8 @@ test('stuck guidance enters the shared chat with the actual task and waits for t
   expect(desktop.requests).toHaveLength(1);
   expect(desktop.requests[0].tools.some((tool: any) => tool.function.name === 'update_task')).toBe(true);
   expect((await desktop.read()).tasks[0].progress).toBe(20);
+  const userMessage = (await desktop.read()).chatSessions[0].messages.find(message => message.role === 'user');
+  expect(userMessage?.taskContext).toMatchObject({ taskId: 'stale-paper', taskName: '论文初稿' });
   await expect.poll(() => ball.getByText('卡住也没关系。先用五分钟写下论文的一个小标题，再告诉我进展。', { exact: true }).evaluate(element => {
     let current: Element | null = element;
     while (current) { if (Number(getComputedStyle(current).opacity) < 1) return false; current = current.parentElement; }
@@ -170,7 +200,7 @@ test('stuck guidance enters the shared chat with the actual task and waits for t
 test('a reminder becomes invalid when another window updates the task', async ({ desktop }) => {
   await settings(desktop, { proactiveEnabled: true });
   const ball = await desktop.ball();
-  await expect(ball.getByRole('button', { name: '保存进度', exact: true })).toBeVisible();
+  await expect(ball.getByRole('button', { name: '展开任务进度提醒', exact: true })).toBeVisible();
   const reminder = (await desktop.read()).proactive!.active!;
   await desktop.main.evaluate(() => {
     const before = window.electronAPI!.storeGet()!;
@@ -200,5 +230,110 @@ test('settings expose the reminder controls and quiet hours suppress reminders',
   await expect((await desktop.ball()).getByRole('button', { name: '打开悬浮球对话' })).toBeVisible();
   expect((await desktop.read()).proactive?.active).toBeUndefined();
   await settings(desktop, { proactiveQuietStart: '00:00', proactiveQuietEnd: '00:00' });
-  await expect((await desktop.ball()).getByRole('button', { name: '保存进度', exact: true })).toBeVisible();
+  await expect((await desktop.ball()).getByRole('button', { name: '展开任务进度提醒', exact: true })).toBeVisible();
+});
+
+for (const [button, progress] of [['完成了', 100], ['推进了一点', 30], ['还没变化', 20]] as const) {
+  test(`quick feedback ${button} saves progress and confirmation time offline`, async ({ desktop }) => {
+    const prior = (await desktop.read()).tasks[0].lastProgressAt!;
+    await settings(desktop, { proactiveEnabled: true });
+    const ball = await desktop.ball();
+    await ball.getByRole('button', { name: '展开任务进度提醒', exact: true }).click();
+    await ball.getByRole('button', { name: button }).click();
+    await expect.poll(async () => (await desktop.read()).proactive?.active).toBeUndefined();
+    const state = await desktop.read();
+    expect(state.tasks[0].progress).toBe(progress);
+    expect(Date.parse(state.tasks[0].lastProgressAt!)).toBeGreaterThan(Date.parse(prior));
+    expect(desktop.requests).toHaveLength(0);
+    await desktop.restart();
+    expect((await desktop.read()).tasks[0].progress).toBe(progress);
+  });
+}
+
+test('single-task dismissal survives restart and can be restored without clearing the reminder count', async ({ desktop }) => {
+  await settings(desktop, { proactiveEnabled: true });
+  const ball = await desktop.ball();
+  await ball.getByRole('button', { name: '展开任务进度提醒', exact: true }).click();
+  await ball.getByRole('button', { name: '今天不提醒这项', exact: true }).click();
+  const before = await desktop.read();
+  expect(before.proactive?.taskStates?.['stale-paper'].dismissedDate).toBe(before.activeDate);
+  expect(before.proactive?.dismissedDate).toBeUndefined();
+  await desktop.restart();
+  expect((await desktop.read()).proactive?.taskStates?.['stale-paper'].dismissedDate).toBe(before.activeDate);
+  await desktop.main.getByRole('button', { name: '设置', exact: true }).click();
+  await expect(desktop.main.getByText('今天已暂停 1 项任务的提醒。', { exact: true })).toBeVisible();
+  await desktop.main.getByRole('button', { name: '恢复主动提醒', exact: true }).click();
+  expect((await desktop.read()).proactive?.taskStates?.['stale-paper'].dismissedDate).toBeUndefined();
+  expect((await desktop.read()).proactive?.count).toBe(1);
+});
+
+for (const edge of ['left', 'right'] as const) {
+  test(`nudge retains the pet position at the ${edge} edge and details can collapse back`, async ({ desktop }) => {
+    const ball = await desktop.ball();
+    await ball.evaluate(edge => {
+      const area = window.electronAPI!.screenGetWorkArea();
+      window.electronAPI!.windowDragStart();
+      window.electronAPI!.windowDragTo(edge === 'left' ? area.x : area.x + area.width - 48, area.y + 20);
+      window.electronAPI!.windowDragEnd();
+    }, edge);
+    await expect.poll(async () => {
+      return ball.evaluate(edge => {
+        const area = window.electronAPI!.screenGetWorkArea();
+        return window.electronAPI!.windowGetBounds().x === (edge === 'left' ? area.x : area.x + area.width - 48);
+      }, edge);
+    }).toBe(true);
+    const original = await ball.evaluate(() => window.electronAPI!.windowGetBounds());
+    await settings(desktop, { proactiveEnabled: true });
+    await expect(ball.getByRole('button', { name: '展开任务进度提醒', exact: true })).toBeVisible();
+    await expect.poll(() => ball.evaluate(() => window.electronAPI!.windowGetBounds().width)).toBe(328);
+    const pet = await ball.getByRole('button', { name: '提醒中的桌宠' }).boundingBox();
+    const bounds = await ball.evaluate(() => window.electronAPI!.windowGetBounds());
+    expect(Math.round(bounds.x + pet!.x)).toBe(original.x);
+    expect(Math.round(bounds.y + pet!.y)).toBe(original.y);
+    await ball.getByRole('button', { name: '展开任务进度提醒', exact: true }).click();
+    await expect.poll(() => ball.evaluate(() => window.electronAPI!.windowGetBounds().height)).toBe(380);
+    await ball.getByRole('button', { name: '收起为小气泡', exact: true }).click();
+    await expect(ball.getByRole('button', { name: '提醒中的桌宠' })).toBeVisible();
+    await expect.poll(() => ball.evaluate(() => window.electronAPI!.windowGetBounds().height)).toBe(112);
+    expect((await desktop.read()).proactive?.count).toBe(1);
+  });
+}
+
+test('chat shows a task binding, detects external rescheduling and lets the user reselect or clear it', async ({ desktop }) => {
+  const ball = await desktop.ball();
+  await ball.getByRole('button', { name: '打开悬浮球对话', exact: true }).click();
+  await ball.getByRole('button', { name: '固定在桌面', exact: true }).click();
+  const selection = ball.getByRole('combobox', { name: '当前关联任务与日期', exact: true });
+  await selection.selectOption('stale-paper');
+  const date = (await desktop.read()).activeDate;
+  await expect(ball.getByText(`正在聊：论文初稿 · ${date}`, { exact: true })).toBeVisible();
+  await desktop.main.evaluate(() => {
+    const before = window.electronAPI!.storeGet()!;
+    const state = JSON.parse(before); state.tasks[0].date = '2030-01-01';
+    if (!window.electronAPI!.storeCommit(JSON.stringify(state), before)) throw new Error('save failed');
+  });
+  await expect(ball.getByText('任务已变更或删除，请重新选择；修改前会先确认。', { exact: true })).toBeVisible();
+  await expect(selection).toHaveValue('__stale__');
+  await selection.selectOption('stale-paper');
+  await expect(ball.getByText('正在聊：论文初稿 · 2030-01-01', { exact: true })).toBeVisible();
+  await selection.selectOption('');
+  await expect(selection).toHaveValue('');
+  await expect(ball.getByText('正在聊：论文初稿 · 2030-01-01', { exact: true })).toHaveCount(0);
+});
+
+
+test('keyboard progress changes save automatically when the adjustment ends', async ({ desktop }) => {
+  await settings(desktop, { proactiveEnabled: true });
+  const ball = await desktop.ball();
+  await ball.getByRole('button', { name: '展开任务进度提醒', exact: true }).click();
+  const slider = ball.getByRole('slider', { name: '提醒任务进度' });
+  await slider.focus();
+  await ball.keyboard.down('ArrowRight');
+  await ball.keyboard.down('ArrowRight');
+  await expect(slider).toHaveValue('22');
+  expect((await desktop.read()).tasks[0].progress).toBe(20);
+  await ball.keyboard.up('ArrowRight');
+  await expect.poll(async () => (await desktop.read()).tasks[0].progress).toBe(22);
+  await expect.poll(async () => (await desktop.read()).proactive?.active).toBeUndefined();
+  expect(desktop.requests).toHaveLength(0);
 });

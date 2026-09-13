@@ -1,9 +1,10 @@
-import type { AppState, ChatMessage, ChatSession } from "../Store";
+import type { AppState, ChatMessage, ChatSession, TaskContext } from "../Store";
 import { AGENT_TOOLS, createToolExecutor, validateDate, type ToolCall, type ToolDefinition } from "./AgentTools";
 import { parseSSEStream, throwIfAborted, withAbort } from "./StreamParser";
 import { buildAgentContext, clipText, historyContent } from "./AgentContext";
 import { learnFromConversation, type LearningResult } from "./MemoryService";
 import { getMemory } from "../state/memory";
+import { logicalDate } from '../state/appState';
 
 export interface AgentStore {
   getState(): AppState;
@@ -168,6 +169,8 @@ export async function runAgent(text: string, store: AgentStore, options: {
   sessionId: string;
   assistantMessageId: string;
   history?: ChatMessage[];
+  taskContext?: TaskContext;
+  requestText?: string;
   signal?: AbortSignal;
   onTextChunk?: (chunk: string) => void;
   readOnly?: boolean;
@@ -176,20 +179,28 @@ export async function runAgent(text: string, store: AgentStore, options: {
   const signal = options.signal ? AbortSignal.any([options.signal, deadline]) : deadline;
   throwIfAborted(signal);
   const state = store.getState();
+  const currentDate = logicalDate(new Date(), state.settings.rolloverTime);
   const session = state.chatSessions.find(item => item.id === options.sessionId);
   const placeholderIndex = session?.messages.findIndex(message => message.id === options.assistantMessageId) ?? -1;
   if (!session || placeholderIndex < 0) throw new Error("找不到本次对话回复，已停止请求。");
   const config = getChatConfig(state);
   const history = options.history ? [...options.history] : session.messages.slice(0, placeholderIndex);
   if (!options.history && history.at(-1)?.role === "user" && (history.at(-1)?.contextText || history.at(-1)?.text) === text) history.pop();
-  const { messages } = buildAgentContext({ state, session, history, text, readOnly: options.readOnly, assistantMessageId: options.assistantMessageId });
   const memoryEpoch = getMemory(state).epoch;
   let sourceUser: ChatMessage | undefined;
   for (let index = placeholderIndex - 1; index >= 0; index--) {
     if (session.messages[index].role === 'user') { sourceUser = { ...session.messages[index] }; break; }
   }
+  const reference = options.taskContext || sourceUser?.taskContext;
+  const taskContext = reference ? { ...reference } : undefined;
+  const { messages } = buildAgentContext({ state, session, history, text, taskContext, currentDate,
+    readOnly: options.readOnly, assistantMessageId: options.assistantMessageId });
   const tools = options.readOnly ? AGENT_TOOLS.filter(tool => ["list_tasks", "propose_tasks"].includes(tool.function.name)) : AGENT_TOOLS;
-  const execute = createToolExecutor(store, { ...options, activeDate: state.activeDate, signal, generateReport: generateCustomSummary });
+  const lastAnswer = history.at(-1);
+  const previousRequestText = lastAnswer?.role === 'model' && /[?？]|哪一|哪项|哪天|确认|指的是|选择/.test(lastAnswer.text)
+    ? [...history].reverse().find(message => message.role === 'user' && !message.contextText)?.text : undefined;
+  const execute = createToolExecutor(store, { ...options, taskContext, requestText: options.requestText ?? text, previousRequestText,
+    activeDate: state.activeDate, currentDate, signal, generateReport: generateCustomSummary });
   let reply = "";
   let callCount = 0;
   const append = (chunk: string) => { reply += chunk; options.onTextChunk?.(chunk); };

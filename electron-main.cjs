@@ -18,6 +18,7 @@ let tray = null;
 let ballReady = false;
 let ballChatExpanded = false;
 let ballMode = 'ball';
+let reminderExpandedId = null;
 let ballAnchor = null;
 let screenLocked = false;
 let systemSuspended = false;
@@ -127,6 +128,7 @@ function createBallWindow() {
   });
   ballAnchor = { x: bx, y: by };
   ballWindow.webContents.on('did-start-loading', () => {
+    reminderExpandedId = null;
     ballReady = false;
     ballChatExpanded = false;
     dragState.delete(ballWindow.id);
@@ -193,7 +195,7 @@ ipcMain.on('store:commit', (event, data, base, guard) => {
     if (merged !== null) { broadcastState(merged, event.sender); deferReminderEvaluation(); }
   } catch (error) {
     console.error('[store] Save failed:', error.message);
-    event.returnValue = null;
+    event.returnValue = error.code === 'TASK_CONTEXT_STALE' ? { error: error.message } : null;
   }
 });
 
@@ -250,6 +252,7 @@ ipcMain.on('app:update-ball', (_event, enabled) => {
 ipcMain.on('ball:ready', event => {
   if (event.sender !== ballWindow?.webContents) return;
   ballReady = true;
+  sendBallPresentation();
   deferReminderEvaluation();
 });
 
@@ -371,12 +374,20 @@ function animateBounds(win, target, durationMs = 200) {
   step();
 }
 
+function ballSize(mode) {
+  return mode === 'chat' ? [380, 520] : mode === 'reminder' ? [360, 380] : mode === 'nudge' ? [328, 112] : [48, 48];
+}
+
 function resizeBall(mode) {
   if (!ballWindow || ballWindow.isDestroyed()) return;
   const area = workArea(ballWindow);
   const [x, y] = ballWindow.getPosition();
-  const anchor = ballAnchor || { x, y };
-  const [width, height] = mode === 'chat' ? [380, 520] : mode === 'reminder' ? [360, 360] : [48, 48];
+  const savedAnchor = ballAnchor || { x, y };
+  const anchor = {
+    x: Math.max(area.x, Math.min(savedAnchor.x, area.x + area.width - 48)),
+    y: Math.max(area.y, Math.min(savedAnchor.y, area.y + area.height - 48)),
+  };
+  const [width, height] = ballSize(mode);
   let newX = anchor.x - (width - 48), newY = anchor.y - (height - 48);
   if (anchor.x - area.x < width / 2) newX = anchor.x;
   if (anchor.y - area.y < height / 2) newY = anchor.y;
@@ -385,19 +396,44 @@ function resizeBall(mode) {
   ballExpandOffset = mode === 'ball' ? { x: 0, y: 0 } : { x: anchor.x - newX, y: anchor.y - newY };
   ballAnchor = mode === 'ball' ? { x: newX, y: newY } : anchor;
   ballMode = mode;
+  sendBallPresentation();
   ballWindow.setResizable(true);
   animateBounds(ballWindow, { x: newX, y: newY, width, height });
   if (mode === 'ball') saveBallPosition(newX, newY);
 }
 
-function syncBallPresentation(state) {
-  if (!ballReady || !ballWindow || ballWindow.isDestroyed()) return;
-  const mode = ballChatExpanded ? 'chat' : state?.proactive?.active && !screenLocked && !systemSuspended ? 'reminder' : 'ball';
-  if (mode !== ballMode && !dragState.has(ballWindow.id)) {
-    resizeBall(mode);
-    if (mode === 'reminder' && ballWindow.isVisible()) ballWindow.showInactive();
+function sendBallPresentation() {
+  if (ballReady && ballWindow && !ballWindow.isDestroyed()) {
+    ballWindow.webContents.send('ball:presentation', { mode: ballMode, anchor: ballExpandOffset });
   }
 }
+
+function syncBallPresentation(state) {
+  if (!ballReady || !ballWindow || ballWindow.isDestroyed()) return;
+  const active = state?.proactive?.active;
+  if (!active || active.id !== reminderExpandedId) reminderExpandedId = null;
+  const mode = ballChatExpanded ? 'chat' : active && !screenLocked && !systemSuspended ? (reminderExpandedId ? 'reminder' : 'nudge') : 'ball';
+  const [width, height] = ballSize(mode);
+  const bounds = ballWindow.getBounds();
+  const interruptedResize = !animations.has(ballWindow.id) && (bounds.width !== width || bounds.height !== height);
+  if ((mode !== ballMode || interruptedResize) && !dragState.has(ballWindow.id)) {
+    resizeBall(mode);
+    if ((mode === 'nudge' || mode === 'reminder') && ballWindow.isVisible()) ballWindow.showInactive();
+  }
+}
+
+ipcMain.on('reminder:expand', (event, id, expanded) => {
+  event.returnValue = { ok: false, error: '提醒已失效，请等待新的提醒。' };
+  if (event.sender !== ballWindow?.webContents || event.senderFrame !== ballWindow.webContents.mainFrame || typeof expanded !== 'boolean') return;
+  try {
+    const saved = readState(STORE_FILE);
+    const current = saved && reconcileReminder(JSON.parse(saved), new Date());
+    if (!current?.proactive?.active || current.proactive.active.id !== id || ballChatExpanded || screenLocked || systemSuspended) return;
+    reminderExpandedId = expanded ? id : null;
+    syncBallPresentation(current);
+    event.returnValue = { ok: true };
+  } catch (error) { console.error('[reminder] Unable to open reminder:', error.message); }
+});
 
 ipcMain.on('ball:expand', event => {
   if (event.sender !== ballWindow?.webContents) return;
@@ -524,7 +560,8 @@ function cancelVisibleReminder() {
   // Lock/suspend may swallow the renderer's mouseup event. Do not leave a
   // permanent dragging flag that blocks later reminders after unlock/resume.
   dragState.clear();
-  if (ballMode === 'reminder') resizeBall('ball');
+  reminderExpandedId = null;
+  if (ballMode === 'reminder' || ballMode === 'nudge') resizeBall('ball');
   try {
     const saved = readState(STORE_FILE);
     if (!saved) return;
@@ -554,7 +591,7 @@ ipcMain.on('proactive:action', (event, id, action, progress) => {
     if (action === 'help') {
       const task = current.tasks.find(item => item.id === active.taskId);
       ballWindow.webContents.send('reminder:help', {
-        taskId: task.id, taskName: task.name,
+        taskId: task.id, taskName: task.name, taskDate: task.date,
         prompt: `我在任务“${task.name}”（日期：${task.date}，当前进度：${task.progress}%）上有点卡住了。请先安抚我，帮我拆出一个可完成的小步骤；先给建议，不要直接添加或修改任务。`,
       });
     }

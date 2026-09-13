@@ -7,6 +7,14 @@ export type TaskReminder = {
   lastProgressAt: string;
   createdAt: string;
   message: string;
+  snoozeMinutes?: 30 | 60 | 120;
+};
+
+export type TaskReminderState = {
+  snoozedUntil?: string;
+  snoozeCount?: number;
+  dismissedDate?: string;
+  lastProgressAt?: string;
 };
 
 export type ProactiveState = {
@@ -16,6 +24,7 @@ export type ProactiveState = {
   snoozedUntil?: string;
   dismissedDate?: string;
   active?: TaskReminder;
+  taskStates?: Record<string, TaskReminderState>;
 };
 
-export type ReminderAction = 'update' | 'snooze' | 'today' | 'help';
+export type ReminderAction = 'update' | 'complete' | 'advance' | 'unchanged' | 'snooze' | 'dismiss-task' | 'today' | 'help';

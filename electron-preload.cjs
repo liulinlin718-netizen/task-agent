@@ -14,6 +14,12 @@ contextBridge.exposeInMainWorld('electronAPI', {
   ballCollapse: () => ipcRenderer.send('ball:collapse'),
   ballCheckSnap: () => ipcRenderer.sendSync('ball:check-snap'),
   ballReady: () => ipcRenderer.send('ball:ready'),
+  reminderExpand: (id, expanded) => ipcRenderer.sendSync('reminder:expand', id, expanded),
+  onBallPresentation: (callback) => {
+    const listener = (_, payload) => callback(payload);
+    ipcRenderer.on('ball:presentation', listener);
+    return () => ipcRenderer.removeListener('ball:presentation', listener);
+  },
   reminderAction: (id, action, progress) => ipcRenderer.sendSync('proactive:action', id, action, progress),
   onReminderHelp: (callback) => {
     const listener = (_, payload) => callback(payload);
@@ -50,7 +56,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
     return result;
   },
   storeSet: (data) => ipcRenderer.sendSync('store:set', data),
-  storeCommit: (data, base, guard) => ipcRenderer.sendSync('store:commit', data, base, guard),
+  storeCommit: (data, base, guard) => {
+    const result = ipcRenderer.sendSync('store:commit', data, base, guard);
+    if (result && typeof result === 'object') throw new Error(result.error || '任务已变化，请重新确认后再发送。');
+    return result;
+  },
   onStoreChanged: (callback) => {
     const listener = (_, data) => callback(data);
     ipcRenderer.on('store:changed', listener);

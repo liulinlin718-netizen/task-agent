@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { buildAgentContext, CONTEXT_LIMITS, retrieveMemories, selectTaskContext } from '../src/services/AgentContext';
+import { buildAgentContext, CONTEXT_LIMITS, historyContent, retrieveMemories, selectTaskContext } from '../src/services/AgentContext';
 import { createDefaultState } from '../src/state/appState';
 import { emptyMemory, type MemoryFact } from '../src/state/memory';
 import type { ChatMessage } from '../src/Store';
@@ -112,4 +112,31 @@ test('an explicit request not to use personal background excludes both facts and
   assert.deepEqual(context.stats.memoryIds, []);
   assert.doesNotMatch(prompt, /我是临床医学专业|临床医学博士|我的临床医学背景|我长期从事临床医学/);
   assert.equal(context.messages.at(-1)?.content, '不要使用我的背景，请解释临床医学');
+});
+
+test('bound task/date is reserved in context and historical source metadata survives serialization', () => {
+  const state = createDefaultState();
+  const taskContext = { taskId: 'bound', taskName: '历史日期的阅读', taskDate: '2026-09-01' };
+  state.tasks = [{ id: 'bound', name: taskContext.taskName, date: taskContext.taskDate, progress: 42 }];
+  const source: ChatMessage = JSON.parse(JSON.stringify({ id: 'source', role: 'user', text: '完成了', taskContext }));
+  assert.match(historyContent(source), /发送时的关联任务/);
+  const context = buildAgentContext({ state, session: state.chatSessions[0], history: [source], text: '给我一点建议', taskContext });
+  const text = context.messages.map(message => message.content).join('\n');
+  assert.match(text, /本次用户主动关联的任务/);
+  assert.match(text, /2026-09-01/);
+  assert.match(text, /"progress":42/);
+  assert.ok(context.stats.taskIds.includes('bound'));
+  assert.ok(context.stats.characters <= CONTEXT_LIMITS.total);
+  state.tasks[0].name = '被改名';
+  const stale = buildAgentContext({ state, session: state.chatSessions[0], history: [], text: '完成了', taskContext });
+  assert.match(stale.messages.map(message => message.content).join('\n'), /已过期，请先重新选择/);
+});
+
+test('today in context is the actual logical day rather than the selected historical date', () => {
+  const state = createDefaultState(); state.activeDate = '2026-09-01';
+  state.tasks = [{ id: 'actual-today', name: '健身', progress: 0, date: '2026-09-13' }];
+  const context = buildAgentContext({ state, session: state.chatSessions[0], history: [], text: '今天健身完成了', currentDate: '2026-09-13' });
+  const prompt = context.messages.map(message => message.content).join('\n');
+  assert.match(prompt, /实际生物钟今天：2026-09-13；当前选中日期：2026-09-01/);
+  assert.ok(context.stats.taskIds.includes('actual-today'));
 });

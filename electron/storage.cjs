@@ -32,6 +32,8 @@ function validateState(data) {
     && ['user', 'model'].includes(value.role) && isString(value.text)
     && optional(value.contextText, isString)
     && optional(value.memoryStatus, isString)
+    && optional(value.taskContext, reference => isObject(reference)
+      && isString(reference.taskId) && reference.taskId.length > 0 && isString(reference.taskName) && isDate(reference.taskDate))
     && optional(value.proposedTasks, items => Array.isArray(items) && items.every(item =>
       isObject(item) && isString(item.name) && typeof item.added === 'boolean' && optional(item.date, isDate)))
     && optional(value.toolEvents, items => Array.isArray(items) && items.every(item => isObject(item)
@@ -295,6 +297,38 @@ function commitState(file, text, baseText, guard) {
     if (!isObject(guard) || !isString(guard.sessionId) || !isString(guard.messageId)) return null;
     const session = current?.chatSessions?.find(value => value.id === guard.sessionId);
     if (!session?.messages.some(message => message.id === guard.messageId)) return null;
+    const baseTasks = new Map(base.tasks.map(task => [task.id, task]));
+    const nextTasks = new Map(next.tasks.map(task => [task.id, task]));
+    const changedIds = [...new Set([...baseTasks.keys(), ...nextTasks.keys()])]
+      .filter(id => !unchanged(baseTasks.get(id), nextTasks.get(id)));
+    // Only task mutations need this gate. Streaming text and unsaved proposals
+    // must remain writable when a task changes while the model is replying.
+    if (changedIds.length) {
+      const staleTask = () => {
+        const error = new Error('任务已在其他窗口删除、改名或改期，请重新确认任务名称和日期后再发送。');
+        error.code = 'TASK_CONTEXT_STALE';
+        throw error;
+      };
+      const currentTasks = new Map(current.tasks.map(task => [task.id, task]));
+      for (const id of changedIds) {
+        const before = baseTasks.get(id), persisted = currentTasks.get(id);
+        // Compare the pre-operation identities: an explicit rename/reschedule
+        // in next is allowed if the selected original task is still current.
+        if (before && (!persisted || persisted.name !== before.name || persisted.date !== before.date)) staleTask();
+      }
+      const sourceUser = messages => {
+        const index = messages?.findIndex(message => message.id === guard.messageId) ?? -1;
+        return index < 0 ? undefined : messages.slice(0, index).findLast(message => message.role === 'user');
+      };
+      const oldSource = sourceUser(base.chatSessions?.find(value => value.id === guard.sessionId)?.messages);
+      const source = sourceUser(session.messages);
+      const reference = source?.taskContext || oldSource?.taskContext;
+      if (reference) {
+        if (oldSource && (!source || source.id !== oldSource.id || !unchanged(source.taskContext, oldSource.taskContext))) staleTask();
+        const bound = currentTasks.get(reference.taskId);
+        if (!bound || bound.name !== reference.taskName || bound.date !== reference.taskDate) staleTask();
+      }
+    }
   }
   if (next.memory && next.memory.epoch === base.memory?.epoch && current?.memory?.epoch === base.memory?.epoch) {
     const previousFacts = new Map(base.memory.facts.map(fact => [fact.id, fact]));
@@ -312,11 +346,38 @@ function commitState(file, text, baseText, guard) {
     merged.proactive = current.proactive;
     if (base.proactive && next.proactive && current.proactive) {
       const changedFields = [...new Set([...Object.keys(base.proactive), ...Object.keys(next.proactive)])]
-        .filter(key => !unchanged(base.proactive[key], next.proactive[key]));
-      if (changedFields.length && changedFields.every(key => ['snoozedUntil', 'dismissedDate'].includes(key) && next.proactive[key] === undefined)) {
+        .filter(key => !unchanged(base.proactive[key], next.proactive[key])
+          && !(key === 'taskStates' && [base.proactive[key], next.proactive[key]]
+            .every(value => value === undefined || (isObject(value) && Object.keys(value).length === 0))));
+      const clearedTaskDismissals = [];
+      const clearsTaskDismissalsOnly = () => {
+        const before = base.proactive.taskStates, after = next.proactive.taskStates;
+        if (!isObject(before) || !isObject(after)) return false;
+        const ids = [...new Set([...Object.keys(before), ...Object.keys(after)])];
+        for (const id of ids) {
+          const oldStatus = Object.hasOwn(before, id) ? before[id] : undefined;
+          const newStatus = Object.hasOwn(after, id) ? after[id] : undefined;
+          if (unchanged(oldStatus, newStatus)) continue;
+          if (!oldStatus || !newStatus || oldStatus.dismissedDate === undefined || newStatus.dismissedDate !== undefined) return false;
+          const { dismissedDate, ...retained } = oldStatus;
+          if (!unchanged(retained, newStatus)) return false;
+          clearedTaskDismissals.push(id);
+        }
+        return clearedTaskDismissals.length > 0;
+      };
+      if (changedFields.length && changedFields.every(key => key === 'taskStates' ? clearsTaskDismissalsOnly()
+        : ['snoozedUntil', 'dismissedDate'].includes(key) && next.proactive[key] === undefined)) {
         merged.proactive = { ...current.proactive };
         for (const key of changedFields) {
-          if (unchanged(current.proactive[key], base.proactive[key])) delete merged.proactive[key];
+          if (key !== 'taskStates' && unchanged(current.proactive[key], base.proactive[key])) delete merged.proactive[key];
+        }
+        for (const id of clearedTaskDismissals) {
+          const states = merged.proactive.taskStates;
+          const status = states && Object.hasOwn(states, id) ? states[id] : undefined;
+          if (status && status.dismissedDate === base.proactive.taskStates[id].dismissedDate) {
+            const { dismissedDate, ...retained } = status;
+            merged.proactive.taskStates = { ...states, [id]: retained };
+          }
         }
       }
     }

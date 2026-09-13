@@ -6,6 +6,7 @@ const REMINDER_TTL_MS = 5 * 60 * 1000;
 const SNOOZE_MS = 30 * 60 * 1000;
 const DAILY_LIMIT = 3;
 const INTERVALS = [30, 60, 120, 240];
+const SNOOZE_MINUTES = [30, 60, 120];
 const isObject = value => value !== null && typeof value === 'object' && !Array.isArray(value);
 const isString = value => typeof value === 'string';
 const optional = (value, check) => value === undefined || check(value);
@@ -19,7 +20,14 @@ function validActive(value) {
   return isObject(value) && ['id', 'taskId', 'taskName', 'message'].every(key => isString(value[key]))
     && value.id.length > 0 && isDate(value.taskDate)
     && Number.isFinite(value.progress) && value.progress >= 0 && value.progress < 100
-    && isTimestamp(value.lastProgressAt) && isTimestamp(value.createdAt);
+    && isTimestamp(value.lastProgressAt) && isTimestamp(value.createdAt)
+    && optional(value.snoozeMinutes, value => SNOOZE_MINUTES.includes(value));
+}
+
+function validTaskState(value) {
+  return isObject(value) && optional(value.snoozedUntil, isTimestamp)
+    && optional(value.snoozeCount, value => Number.isInteger(value) && value >= 0 && value <= 3)
+    && optional(value.dismissedDate, isDate) && optional(value.lastProgressAt, isTimestamp);
 }
 
 /** Optional fields are accepted for legacy files; malformed present fields are not. */
@@ -27,7 +35,9 @@ function validProactive(value) {
   return value === undefined || (isObject(value) && isDate(value.day)
     && Number.isInteger(value.count) && value.count >= 0 && value.count <= DAILY_LIMIT
     && optional(value.lastRemindedAt, isTimestamp) && optional(value.snoozedUntil, isTimestamp)
-    && optional(value.dismissedDate, isDate) && optional(value.active, validActive));
+    && optional(value.dismissedDate, isDate) && optional(value.active, validActive)
+    && optional(value.taskStates, states => isObject(states)
+      && Object.entries(states).every(([id, state]) => id.length > 0 && validTaskState(state))));
 }
 
 function validProactiveSettings(settings) {
@@ -72,6 +82,54 @@ function canRemind(state, now, day) {
     && proactive?.dismissedDate !== day;
 }
 
+function taskState(state, id) {
+  const states = state.proactive?.taskStates;
+  return states && Object.hasOwn(states, id) ? states[id] : undefined;
+}
+
+function canRemindTask(state, task, now, day) {
+  const status = taskState(state, task.id);
+  return status?.dismissedDate !== day
+    && !(isTimestamp(status?.snoozedUntil) && Date.parse(status.snoozedUntil) > now.getTime());
+}
+
+function updateTaskState(state, id, value) {
+  return { ...state, proactive: { ...state.proactive, taskStates: { ...state.proactive?.taskStates, [id]: value } } };
+}
+
+function resetTaskSnooze(state, id, timestamp) {
+  const previous = taskState(state, id);
+  if (!previous) return state;
+  if (previous.snoozeCount === 0 && previous.snoozedUntil === undefined && previous.lastProgressAt === timestamp) return state;
+  const { snoozedUntil, ...rest } = previous;
+  return updateTaskState(state, id, { ...rest, snoozeCount: 0, lastProgressAt: timestamp });
+}
+
+// Bind postponements to the progress version, including confirmations from
+// another window. A dismissed task stays dismissed for its explicitly chosen day.
+function reconcileTaskStates(state) {
+  const states = state.proactive?.taskStates;
+  if (!states) return state;
+  const tasks = new Map(state.tasks.map(task => [task.id, task]));
+  let next = state;
+  const removed = [];
+  for (const [id, status] of Object.entries(states)) {
+    const task = tasks.get(id);
+    if (!task || task.progress >= 100) { removed.push(id); continue; }
+    if (status.lastProgressAt !== undefined && status.lastProgressAt !== task.lastProgressAt) {
+      next = resetTaskSnooze(next, id, task.lastProgressAt);
+    } else if (status.lastProgressAt === undefined && isTimestamp(task.lastProgressAt)) {
+      next = updateTaskState(next, id, { ...status, lastProgressAt: task.lastProgressAt });
+    }
+  }
+  if (removed.length) {
+    const retained = { ...next.proactive.taskStates };
+    for (const id of removed) delete retained[id];
+    next = { ...next, proactive: { ...next.proactive, taskStates: retained } };
+  }
+  return next;
+}
+
 /** Preserve unrelated edits; a same-value explicit confirmation supplies a fresh next timestamp. */
 function stampTaskActivity(previous, next, now = new Date()) {
   checkedNow(now);
@@ -89,7 +147,12 @@ function stampTaskActivity(previous, next, now = new Date()) {
     changed = true;
     return { ...task, lastProgressAt };
   });
-  return changed ? { ...next, tasks } : next;
+  let stamped = changed ? { ...next, tasks } : next;
+  for (const task of tasks) {
+    const old = oldTasks.get(task.id);
+    if (old && old.progress !== task.progress) stamped = resetTaskSnooze(stamped, task.id, task.lastProgressAt);
+  }
+  return reconcileTaskStates(stamped);
 }
 
 function withoutActive(state) {
@@ -100,6 +163,7 @@ function withoutActive(state) {
 /** Reconciliation only withdraws a card; it never refunds quota or cooldown. */
 function reconcileReminder(state, now = new Date()) {
   checkedNow(now);
+  state = reconcileTaskStates(state);
   const proactive = state.proactive;
   const active = proactive?.active;
   if (!active) return state;
@@ -108,7 +172,7 @@ function reconcileReminder(state, now = new Date()) {
   const age = now.getTime() - Date.parse(active.createdAt);
   const valid = validActive(active) && proactive.day === day && canRemind(state, now, day)
     && age >= 0 && age < REMINDER_TTL_MS && task && task.date === day && task.date === active.taskDate
-    && task.name === active.taskName && task.progress < 100
+    && task.name === active.taskName && task.progress < 100 && canRemindTask(state, task, now, day)
     && task.progress === active.progress && task.lastProgressAt === active.lastProgressAt
     && Date.parse(task.lastProgressAt) <= now.getTime();
   return valid ? state : withoutActive(state);
@@ -129,14 +193,17 @@ function planReminder(state, now = new Date()) {
   const nowMs = now.getTime();
   const interval = intervalMs(next.settings || {});
   const previousReminder = isTimestamp(proactive?.lastRemindedAt) ? Date.parse(proactive.lastRemindedAt) : undefined;
-  // A requested 30-minute snooze may bypass the global interval once when due.
-  // Future timestamps still block reminders when the system clock goes backwards.
-  const requestedFollowUp = isTimestamp(proactive?.snoozedUntil) && Date.parse(proactive.snoozedUntil) <= nowMs;
-  if (previousReminder !== undefined && (previousReminder > nowMs || (!requestedFollowUp && nowMs - previousReminder < interval))) return next;
+  // Legacy global snoozes retain their one-time follow-up. New postponements
+  // can bypass the interval only for the same task, never for an unrelated one.
+  const legacyFollowUp = isTimestamp(proactive?.snoozedUntil) && Date.parse(proactive.snoozedUntil) <= nowMs;
+  if (previousReminder !== undefined && previousReminder > nowMs) return next;
+  const globalIntervalPassed = previousReminder === undefined || nowMs - previousReminder >= interval || legacyFollowUp;
   const priorities = { high: 2, medium: 1, low: 0 };
   const candidates = next.tasks.filter(task => task.date === day && Number.isFinite(task.progress)
     && task.progress >= 0 && task.progress < 100 && isTimestamp(task.lastProgressAt)
-    && nowMs - Date.parse(task.lastProgressAt) >= interval);
+    && nowMs - Date.parse(task.lastProgressAt) >= interval && canRemindTask(next, task, now, day)
+    && (globalIntervalPassed || (isTimestamp(taskState(next, task.id)?.snoozedUntil)
+      && Date.parse(taskState(next, task.id).snoozedUntil) <= nowMs)));
   candidates.sort((a, b) => Date.parse(a.lastProgressAt) - Date.parse(b.lastProgressAt)
     || (priorities[b.priority] || 0) - (priorities[a.priority] || 0));
   const task = candidates[0];
@@ -147,31 +214,48 @@ function planReminder(state, now = new Date()) {
     id: `reminder:${createdAt}:${count}:${task.id}`,
     taskId: task.id, taskName: task.name, taskDate: task.date,
     progress: task.progress, lastProgressAt: task.lastProgressAt, createdAt,
+    snoozeMinutes: SNOOZE_MINUTES[Math.min(taskState(next, task.id)?.snoozeCount || 0, 2)],
     message: `「${task.name}」的进度记录有一段时间没更新了，目前记为 ${task.progress}%。如果方便，可以更新一下；也可以稍后提醒。`,
   };
   const { snoozedUntil, ...retained } = proactive || {};
-  return { ...next, proactive: { ...retained, day, count, lastRemindedAt: createdAt, active } };
+  next = { ...next, proactive: { ...retained, day, count, lastRemindedAt: createdAt, active } };
+  const status = taskState(next, task.id);
+  if (status?.snoozedUntil !== undefined) {
+    const { snoozedUntil, ...taskStatus } = status;
+    next = updateTaskState(next, task.id, taskStatus);
+  }
+  return next;
 }
 
 function applyReminderAction(state, id, action, progress, now = new Date()) {
   checkedNow(now);
-  if (!['update', 'snooze', 'today', 'help'].includes(action)) throw new Error('不支持的提醒操作');
+  if (!['update', 'complete', 'advance', 'unchanged', 'snooze', 'dismiss-task', 'today', 'help'].includes(action)) throw new Error('不支持的提醒操作');
   if (action === 'update' ? !Number.isFinite(progress) || progress < 0 || progress > 100 : progress !== undefined) {
     throw new Error('进度必须是 0 到 100 的有效数字，且只用于更新进度');
   }
   const current = reconcileReminder(state, now);
   const active = current.proactive?.active;
   if (!isString(id) || !active || active.id !== id) throw new Error('这条提醒已过期或任务已变化，请在主面板查看最新任务');
-  const next = withoutActive(current);
-  if (action === 'update') {
-    return { ...next, tasks: next.tasks.map(task => task.id === active.taskId
-      ? { ...task, progress, lastProgressAt: now.toISOString() } : task) };
+  let next = withoutActive(current);
+  if (['update', 'complete', 'advance', 'unchanged'].includes(action)) {
+    const confirmed = action === 'complete' ? 100 : action === 'advance' ? Math.min(100, active.progress + 10)
+      : action === 'unchanged' ? active.progress : progress;
+    next = { ...next, tasks: next.tasks.map(task => task.id === active.taskId
+      ? { ...task, progress: confirmed, lastProgressAt: now.toISOString() } : task) };
+    return reconcileTaskStates(resetTaskSnooze(next, active.taskId, now.toISOString()));
   }
   if (action === 'today') {
     return { ...next, proactive: { ...next.proactive, dismissedDate: localDate(now, next.settings?.rolloverTime) } };
   }
+  const status = taskState(next, active.taskId) || {};
+  if (action === 'dismiss-task') {
+    return updateTaskState(next, active.taskId, { ...status, dismissedDate: localDate(now, next.settings?.rolloverTime), lastProgressAt: active.lastProgressAt });
+  }
   // For help, main captures the validated card and opens the AI composer itself.
-  return { ...next, proactive: { ...next.proactive, snoozedUntil: new Date(now.getTime() + SNOOZE_MS).toISOString() } };
+  const minutes = action === 'snooze' ? SNOOZE_MINUTES[Math.min(status.snoozeCount || 0, 2)] : 30;
+  return updateTaskState(next, active.taskId, { ...status,
+    snoozeCount: action === 'snooze' ? Math.min(3, (status.snoozeCount || 0) + 1) : status.snoozeCount || 0,
+    snoozedUntil: new Date(now.getTime() + minutes * 60000).toISOString(), lastProgressAt: active.lastProgressAt });
 }
 
 module.exports = {

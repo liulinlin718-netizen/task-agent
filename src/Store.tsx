@@ -15,6 +15,8 @@ export type Task = {
   lastProgressAt?: string;
 };
 
+export type TaskContext = { taskId: string; taskName: string; taskDate: string };
+
 export type HistorySummary = {
   date: string; // YYYY-MM-DD
   summary: string;
@@ -32,6 +34,7 @@ export type ChatMessage = {
   id: string;
   role: 'user' | 'model';
   text: string;
+  taskContext?: TaskContext;
   contextText?: string; // Bounded extracted attachment text; the UI displays text instead.
   memoryStatus?: string;
   proposedTasks?: { name: string; added: boolean; date?: string }[];
