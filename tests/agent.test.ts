@@ -2,6 +2,7 @@ import test, { afterEach } from "node:test";
 import assert from "node:assert/strict";
 import { AGENT_MAX_ROUNDS, callChatCompletion, generateCustomSummary, runAgent, type AgentStore } from "../src/services/AgentService";
 import type { AppState, ChatMessage, Task } from "../src/Store";
+import { logicalDate } from '../src/state/appState';
 
 const originalFetch = globalThis.fetch;
 afterEach(() => { globalThis.fetch = originalFetch; });
@@ -107,12 +108,89 @@ test("valid lookup, update and delete execute in order using current state", asy
   const { store, options } = setup([], [{ id: "t", name: "论文", date: "2026-09-11", progress: 10 }]);
   mock((body, _url, _init, index) => {
     if (index === 0) return json({ tool_calls: [call("lookup", "list_tasks", { query: "论文" })] });
-    if (index === 1) { assert.equal(JSON.parse(body.messages.at(-1).content).data.tasks[0].id, "t"); return json({ tool_calls: [call("update", "update_task", { taskId: "t", progress: 100, date: "2026-09-12", notes: "已完成", priority: "high" })] }); }
+    if (index === 1) { assert.equal(JSON.parse(body.messages.at(-1).content).data.tasks[0].id, "t"); return json({ tool_calls: [call("update", "update_task", { taskId: "t", progress: 100, notes: "已完成", priority: "high" })] }); }
     if (index === 2) { assert.equal(store.getState().tasks[0].progress, 100); return json({ tool_calls: [call("delete", "delete_task", { taskId: "t" })] }); }
     assert.equal(store.getState().tasks.length, 0);
     return json({ content: "已处理。" });
   });
-  await runAgent("更新再删除", store, options);
+  await runAgent("把2026-09-11论文标为完成再删除", store, options);
+});
+
+test('a persisted user task binding scopes a short completion even for a historical task', async () => {
+  const { store, options } = setup([], [{ id: 'bound', name: '旧日阅读', date: '2026-09-01', progress: 20 }, { id: 'other', name: '论文', date: '2026-09-11', progress: 0 }]);
+  const taskContext = { taskId: 'bound', taskName: '旧日阅读', taskDate: '2026-09-01' };
+  store.setState(state => ({ ...state, chatSessions: state.chatSessions.map(session => ({ ...session, messages: session.messages.map(message => message.id === 'u' ? { ...message, text: '这项完成了', taskContext } : message) })) }));
+  mock((body, _url, _init, index) => {
+    assert.match(body.messages.filter((message: any) => message.role === 'system').map((message: any) => message.content).join('\n'), /本次用户主动关联.*任务/s);
+    return index === 0 ? json({ tool_calls: [call('complete-bound', 'update_task', { taskId: 'bound', progress: 100 })] }) : json({ content: '关联任务已完成。' });
+  });
+  await runAgent('这项完成了', store, options);
+  assert.deepEqual(store.getState().tasks.map(task => task.progress), [100, 0]);
+});
+
+test('a rejected binding switch locks later writes in that turn while queries remain possible', async () => {
+  const tasks = [{ id: 'bound', name: '健身', date: '2026-09-11', progress: 20 }, { id: 'other', name: '读文献', date: '2026-09-11', progress: 0 }];
+  const { store, options, events } = setup([], tasks);
+  mock((body, _url, _init, index) => {
+    if (index === 0) return json({ tool_calls: [call('wrong', 'update_task', { taskId: 'other', progress: 100 }), call('retry', 'update_task', { taskId: 'bound', progress: 100 }), call('read', 'list_tasks', {})] });
+    assert.deepEqual(body.messages.filter((message: any) => message.role === 'tool').map((message: any) => JSON.parse(message.content).ok), [false, false, true]);
+    return json({ content: '请确认需要操作哪一项任务。' });
+  });
+  await runAgent('完成了', store, { ...options, taskContext: { taskId: 'bound', taskName: '健身', taskDate: '2026-09-11' } });
+  assert.deepEqual(store.getState().tasks, tasks);
+  assert.deepEqual(events().map(event => event.status), ['error', 'error', 'success']);
+});
+
+test('a binding changed immediately before committing is rechecked inside the state updater', async () => {
+  const { store, options, events } = setup([], [{ id: 'bound', name: '健身', date: '2026-09-11', progress: 20 }]);
+  const setState = store.setState;
+  let race = true;
+  store.setState = updater => {
+    if (race) { race = false; setState(state => ({ ...state, tasks: state.tasks.map(task => ({ ...task, name: '外部改名' })) })); }
+    setState(updater);
+  };
+  mock((_body, _url, _init, index) => index === 0 ? json({ tool_calls: [call('write', 'update_task', { taskId: 'bound', progress: 100 })] }) : json({ content: '关联已变化，请重新选择。' }));
+  await runAgent('完成了', store, { ...options, taskContext: { taskId: 'bound', taskName: '健身', taskDate: '2026-09-11' } });
+  assert.equal(store.getState().tasks[0].progress, 20);
+  assert.equal(store.getState().tasks[0].name, '外部改名');
+  assert.equal(events()[0].status, 'error');
+});
+
+test('an unbound explicit-today pinyin request cannot mutate a future task then try another ID', async () => {
+  const today = logicalDate(new Date(), '02:00');
+  const date = new Date(`${today}T12:00:00Z`); date.setUTCDate(date.getUTCDate() + 1); const future = date.toISOString().slice(0, 10);
+  const tasks = [{ id: 'today', name: '面阶跃星辰', date: today, progress: 42 }, { id: 'future', name: '面试', date: future, progress: 0 }];
+  const { store, options, events } = setup([], tasks);
+  mock((_body, _url, _init, index) => index === 0 ? json({ tool_calls: [call('wrong-day', 'update_task', { taskId: 'future', progress: 100 }), call('retry-today', 'update_task', { taskId: 'today', progress: 100 })] }) : json({ content: '请确认完整任务名称。' }));
+  await runAgent('今天jieyuexingchen面完了', store, options);
+  assert.deepEqual(store.getState().tasks, tasks);
+  assert.deepEqual(events().map(event => event.status), ['error', 'error']);
+});
+
+test('an explicit move from tomorrow to today uses the source date even when history is selected', async () => {
+  const today = logicalDate(new Date(), '02:00');
+  const date = new Date(`${today}T12:00:00Z`); date.setUTCDate(date.getUTCDate() + 1); const future = date.toISOString().slice(0, 10);
+  const { store, options } = setup([], [{ id: 'moving', name: '面试', date: future, progress: 0 }]);
+  mock((_body, _url, _init, index) => index === 0 ? json({ tool_calls: [call('move', 'update_task', { taskId: 'moving', date: today })] }) : json({ content: '已改到今天。' }));
+  await runAgent('把明天的任务改到今天', store, options);
+  assert.equal(store.getState().tasks[0].date, today);
+});
+
+test('after a real clarification turn a short date reply selects the prior subject among other tasks', async () => {
+  const { store, options } = setup([], [
+    { id: 'first', name: '面试', date: '2026-09-13', progress: 0 },
+    { id: 'second', name: '面试', date: '2026-09-14', progress: 0 },
+    { id: 'unrelated', name: '读文献', date: '2026-09-14', progress: 0 },
+  ]);
+  store.setState(state => ({ ...state, chatSessions: state.chatSessions.map(session => ({ ...session, messages: session.messages.map(message => message.id === 'u' ? { ...message, text: '把面试标为完成' } : message) })) }));
+  mock((_body, _url, _init, index) => index === 0 ? json({ content: '你指的是9/13还是9/14的面试？' })
+    : index === 1 ? json({ tool_calls: [call('selected', 'update_task', { taskId: 'second', progress: 100 })] }) : json({ content: '9/14的面试已完成。' }));
+  const first = await runAgent('把面试标为完成', store, options);
+  store.setState(state => ({ ...state, chatSessions: state.chatSessions.map(session => ({ ...session, messages: session.messages.map(message => message.id === 'a' ? { ...message, text: first.reply } : message) })) }));
+  const history = [...store.getState().chatSessions[0].messages];
+  store.setState(state => ({ ...state, chatSessions: state.chatSessions.map(session => ({ ...session, messages: [...session.messages, { id: 'u2', role: 'user', text: '9/14那项' }, { id: 'a2', role: 'model', text: '' }] })) }));
+  await runAgent('9/14那项', store, { sessionId: 's', assistantMessageId: 'a2', history });
+  assert.deepEqual(store.getState().tasks.map(task => task.progress), [0, 100, 0]);
 });
 
 test("repeated call IDs, equivalent arguments and existing tasks cannot duplicate side effects", async () => {

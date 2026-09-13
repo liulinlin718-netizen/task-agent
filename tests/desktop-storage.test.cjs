@@ -128,6 +128,25 @@ test('legacy v1 state remains available for renderer migration', () => {
   assert.deepEqual(parseState(JSON.stringify(legacy)), legacy);
 });
 
+test('message task references survive saving and encrypted backup while malformed imports are rejected', t => {
+  const file = storeFile(t), initial = state(), password = 'isolated-task-context-test';
+  // A historical source remains meaningful even after the associated task was deleted.
+  const reference = { taskId: 'previous-task', taskName: '曾经的论文任务', taskDate: '2026-09-10' };
+  initial.chatSessions[0].messages.push({ id: 'bound-user', role: 'user', text: '帮我看看下一步', taskContext: reference });
+  const saved = writeState(file, JSON.stringify(initial));
+  assert.deepEqual(JSON.parse(readState(file)).chatSessions[0].messages[0].taskContext, reference);
+  assert.deepEqual(JSON.parse(decryptData(encryptData(saved, password), password)).chatSessions[0].messages[0].taskContext, reference);
+  const disk = fs.readFileSync(file, 'utf8');
+  for (const invalid of [null, [], 'task', {}, { ...reference, taskId: '' }, { ...reference, taskId: 1 },
+    { ...reference, taskName: {} }, { ...reference, taskDate: '2026-02-30' }, { ...reference, taskDate: 20260910 }]) {
+    const changed = structuredClone(initial); changed.chatSessions[0].messages[0].taskContext = invalid;
+    assert.throws(() => writeState(file, JSON.stringify(changed), { restore: true }), /chat sessions/);
+    assert.equal(fs.readFileSync(file, 'utf8'), disk);
+  }
+  const malformed = structuredClone(initial); malformed.chatSessions[0].messages[0].taskContext.taskName = null;
+  assert.throws(() => decryptData(legacyEncrypt(JSON.stringify(malformed), password), password), /chat sessions/);
+});
+
 test('stale windows preserve concurrent task additions and independent fields', t => {
   const file = storeFile(t), original = state(), base = JSON.stringify(original);
   writeState(file, base);
@@ -294,6 +313,95 @@ test('guarded transaction rejects missing stores and invalid guards before creat
   assert.equal(commitState(file, data, data, { sessionId: 's1', messageId: 'missing' }), null);
   assert.equal(commitState(file, data, data, null), null);
   assert.equal(fs.existsSync(file), false);
+});
+
+for (const concurrentChange of ['rename', 'reschedule', 'delete']) {
+  test(`guarded task writes atomically reject a concurrent ${concurrentChange} without recording success`, t => {
+    const file = storeFile(t), original = state();
+    original.chatSessions[0].messages = [{ id: 'request', role: 'user', text: '更新阅读文献的进度' }, { id: 'response', role: 'model', text: '' }];
+    const base = writeState(file, JSON.stringify(original));
+    const changed = JSON.parse(base);
+    if (concurrentChange === 'rename') changed.tasks[0].name = '另一个任务名称';
+    if (concurrentChange === 'reschedule') changed.tasks[0].date = '2026-09-12';
+    if (concurrentChange === 'delete') changed.tasks = [];
+    const current = writeState(file, JSON.stringify(changed));
+    const stale = JSON.parse(base); stale.tasks[0].progress = 80;
+    stale.tasks.push({ id: 'should-not-exist', name: '同一事务的新增任务', date: '2026-09-11', progress: 0 });
+    stale.chatSessions[0].messages[1].toolEvents = [{ id: 'wrong-success', name: 'update_task', status: 'success', message: '已更新' }];
+    const snapshot = () => Object.fromEntries(fs.readdirSync(path.dirname(file)).sort().map(name => [name, fs.readFileSync(path.join(path.dirname(file), name), 'utf8')]));
+    const before = snapshot();
+    assert.throws(() => commitState(file, JSON.stringify(stale), base, { sessionId: 's1', messageId: 'response' }),
+      { code: 'TASK_CONTEXT_STALE', message: /删除、改名或改期/ });
+    assert.deepEqual(JSON.parse(readState(file)), JSON.parse(current));
+    assert.deepEqual(snapshot(), before);
+  });
+}
+
+test('guarded chat deltas and pure proposals remain writable after their bound task changes', t => {
+  const file = storeFile(t), original = state();
+  original.chatSessions[0].messages = [{ id: 'request', role: 'user', text: '给出建议', taskContext: {
+    taskId: 't1', taskName: original.tasks[0].name, taskDate: original.tasks[0].date,
+  } }, { id: 'response', role: 'model', text: '' }];
+  const base = writeState(file, JSON.stringify(original));
+  const changed = JSON.parse(base); changed.tasks[0].name = '其他窗口的新名称';
+  writeState(file, JSON.stringify(changed));
+  const next = JSON.parse(base);
+  next.chatSessions[0].messages[1].text = '这是尚未采纳的建议';
+  next.chatSessions[0].messages[1].proposedTasks = [{ name: '建议步骤', added: false, date: '2026-09-11' }];
+  const result = commitState(file, JSON.stringify(next), base, { sessionId: 's1', messageId: 'response' });
+  assert.notEqual(result, null);
+  const saved = JSON.parse(result);
+  assert.equal(saved.tasks[0].name, changed.tasks[0].name);
+  assert.equal(saved.tasks.length, 1);
+  assert.deepEqual(saved.chatSessions[0].messages[1], next.chatSessions[0].messages[1]);
+});
+
+test('a guarded explicit rename and reschedule is allowed while its original target is current', t => {
+  const file = storeFile(t), original = state();
+  original.chatSessions[0].messages = [{ id: 'request', role: 'user', text: '将阅读文献改名并改到明天', taskContext: {
+    taskId: 't1', taskName: original.tasks[0].name, taskDate: original.tasks[0].date,
+  } }, { id: 'response', role: 'model', text: '' }];
+  const base = writeState(file, JSON.stringify(original));
+  const next = JSON.parse(base); next.tasks[0].name = '阅读实验论文'; next.tasks[0].date = '2026-09-12';
+  next.chatSessions[0].messages[1].toolEvents = [{ id: 'success', name: 'update_task', status: 'success', message: '已改期' }];
+  const result = commitState(file, JSON.stringify(next), base, { sessionId: 's1', messageId: 'response' });
+  assert.notEqual(result, null);
+  const saved = JSON.parse(result);
+  assert.equal(saved.tasks[0].name, next.tasks[0].name);
+  assert.equal(saved.tasks[0].date, next.tasks[0].date);
+  assert.equal(saved.chatSessions[0].messages[1].toolEvents[0].id, 'success');
+});
+
+test('a bound agent cannot add replacement tasks after the source task or user reference disappeared', t => {
+  const file = storeFile(t), original = state();
+  original.chatSessions[0].messages = [{ id: 'request', role: 'user', text: '增加下一步', taskContext: {
+    taskId: 't1', taskName: original.tasks[0].name, taskDate: original.tasks[0].date,
+  } }, { id: 'response', role: 'model', text: '' }];
+  const base = writeState(file, JSON.stringify(original));
+  const next = JSON.parse(base); next.tasks.push({ id: 'replacement', name: '新增步骤', date: '2026-09-11', progress: 0 });
+  next.chatSessions[0].messages[1].toolEvents = [{ id: 'wrong-success', name: 'add_tasks', status: 'success', message: '已添加' }];
+  for (const remove of ['task', 'source']) {
+    writeState(file, base, { restore: true });
+    const changed = JSON.parse(base);
+    if (remove === 'task') changed.tasks = [];
+    else changed.chatSessions[0].messages.shift();
+    const current = writeState(file, JSON.stringify(changed));
+    assert.throws(() => commitState(file, JSON.stringify(next), base, { sessionId: 's1', messageId: 'response' }),
+      { code: 'TASK_CONTEXT_STALE' });
+    assert.deepEqual(JSON.parse(readState(file)), JSON.parse(current));
+  }
+});
+
+test('a stale user task binding is checked even when the renderer already knows the task new identity', t => {
+  const file = storeFile(t), original = state();
+  original.chatSessions[0].messages = [{ id: 'request', role: 'user', text: '推进一下', taskContext: {
+    taskId: 't1', taskName: '改名前的任务', taskDate: '2026-09-11',
+  } }, { id: 'response', role: 'model', text: '' }];
+  const base = writeState(file, JSON.stringify(original));
+  const next = JSON.parse(base); next.tasks[0].progress = 10;
+  assert.throws(() => commitState(file, JSON.stringify(next), base, { sessionId: 's1', messageId: 'response' }),
+    { code: 'TASK_CONTEXT_STALE' });
+  assert.deepEqual(JSON.parse(readState(file)), JSON.parse(base));
 });
 
 test('profile and long-term memory live in a separate physical file and survive restart', t => {
@@ -642,4 +750,67 @@ test('a complete user-data reset clears reminder history but ordinary snapshots 
   cleared.chatSessions = [{ id: 'reset-session', title: '新对话', messages: [], updatedAt: '2026-09-11T01:00:00.000Z' }];
   cleared.activeChatSessionId = 'reset-session'; cleared.reports = []; cleared.historySummaries = [];
   assert.equal(JSON.parse(commitState(file, JSON.stringify(cleared), base)).proactive, undefined);
+});
+
+test('resuming task dismissals preserves postponements and concurrent reminder state', t => {
+  const file = storeFile(t), initial = state();
+  initial.tasks.push({ ...initial.tasks[0], id: 't2' });
+  initial.proactive = { day: '2026-09-11', count: 2, lastRemindedAt: '2026-09-11T01:00:00.000Z', dismissedDate: '2026-09-11',
+    taskStates: Object.fromEntries(initial.tasks.map(task => [task.id, {
+      snoozeCount: 2, snoozedUntil: '2026-09-11T05:00:00.000Z', dismissedDate: '2026-09-11', lastProgressAt: task.lastProgressAt,
+    }])) };
+  const base = writeState(file, JSON.stringify(initial));
+  const resume = JSON.parse(base); delete resume.proactive.dismissedDate;
+  for (const status of Object.values(resume.proactive.taskStates)) delete status.dismissedDate;
+  const newer = JSON.parse(base);
+  newer.proactive.count = 3;
+  newer.proactive.taskStates.t1.snoozeCount = 3;
+  newer.proactive.taskStates.t1.snoozedUntil = '2026-09-11T06:00:00.000Z';
+  newer.proactive.taskStates.t2.dismissedDate = '2026-09-12';
+  writeState(file, JSON.stringify(newer));
+  const resumed = JSON.parse(commitState(file, JSON.stringify(resume), base));
+  assert.equal(resumed.proactive.dismissedDate, undefined);
+  assert.equal(resumed.proactive.taskStates.t1.dismissedDate, undefined);
+  assert.equal(resumed.proactive.taskStates.t1.snoozeCount, 3);
+  assert.equal(resumed.proactive.taskStates.t1.snoozedUntil, '2026-09-11T06:00:00.000Z');
+  assert.equal(resumed.proactive.taskStates.t2.dismissedDate, '2026-09-12');
+  assert.equal(resumed.proactive.count, 3);
+  assert.equal(resumed.proactive.lastRemindedAt, initial.proactive.lastRemindedAt);
+  const stale = JSON.parse(base); stale.proactive.taskStates.t1.snoozeCount = 0;
+  delete stale.proactive.taskStates.t1.snoozedUntil;
+  const protectedState = JSON.parse(commitState(file, JSON.stringify(stale), base));
+  assert.equal(protectedState.proactive.taskStates.t1.snoozeCount, 3);
+  assert.equal(protectedState.proactive.taskStates.t1.snoozedUntil, '2026-09-11T06:00:00.000Z');
+});
+
+test('progress commits reset task postponements and stale windows cannot restore them', t => {
+  const file = storeFile(t), initial = state();
+  initial.proactive = { day: '2026-09-11', count: 1, taskStates: {
+    t1: { snoozeCount: 3, snoozedUntil: '2026-09-11T05:00:00.000Z', lastProgressAt: initial.tasks[0].lastProgressAt },
+  } };
+  const base = writeState(file, JSON.stringify(initial));
+  const update = JSON.parse(base); update.tasks[0].progress = 40;
+  const progressed = JSON.parse(commitState(file, JSON.stringify(update), base));
+  assert.deepEqual(progressed.proactive.taskStates.t1, { snoozeCount: 0, lastProgressAt: progressed.tasks[0].lastProgressAt });
+  const stale = JSON.parse(base); stale.profile.goal = '独立修改';
+  const merged = JSON.parse(commitState(file, JSON.stringify(stale), base));
+  assert.deepEqual(merged.proactive, progressed.proactive);
+  assert.equal(merged.tasks[0].progress, 40);
+  const deleting = JSON.parse(JSON.stringify(merged)); deleting.tasks = [];
+  const deleted = JSON.parse(commitState(file, JSON.stringify(deleting), JSON.stringify(merged)));
+  assert.deepEqual(deleted.proactive.taskStates, {});
+});
+
+test('an optional empty task-state map does not block restoring a legacy global dismissal', t => {
+  const file = storeFile(t), initial = state();
+  initial.proactive = { day: '2026-09-11', count: 2, dismissedDate: '2026-09-11' };
+  const base = writeState(file, JSON.stringify(initial));
+  const resume = JSON.parse(base); delete resume.proactive.dismissedDate; resume.proactive.taskStates = {};
+  const newer = JSON.parse(base);
+  newer.proactive.taskStates = { t1: { snoozeCount: 1, snoozedUntil: '2026-09-11T05:00:00.000Z', lastProgressAt: newer.tasks[0].lastProgressAt } };
+  writeState(file, JSON.stringify(newer));
+  const restored = JSON.parse(commitState(file, JSON.stringify(resume), base));
+  assert.equal(restored.proactive.dismissedDate, undefined);
+  assert.equal(restored.proactive.count, 2);
+  assert.deepEqual(restored.proactive.taskStates, newer.proactive.taskStates);
 });

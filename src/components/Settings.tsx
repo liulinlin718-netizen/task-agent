@@ -13,6 +13,7 @@ export function Settings() {
   const dismissedToday = state.proactive?.dismissedDate === logicalDate(new Date(), state.settings.rolloverTime);
   const snoozedUntil = state.proactive?.snoozedUntil ? new Date(state.proactive.snoozedUntil) : null;
   const isSnoozed = Boolean(snoozedUntil && snoozedUntil.getTime() > Date.now());
+  const pausedTaskCount = Object.values(state.proactive?.taskStates || {}).filter(item => item.dismissedDate === logicalDate(new Date(), state.settings.rolloverTime)).length;
 
   const updateSetting = (key: keyof typeof state.settings, value: any) => {
     setState(s => ({ ...s, settings: { ...s.settings, [key]: value } }));
@@ -258,12 +259,14 @@ export function Settings() {
               </div>
             </div>
             <p className="text-xs leading-relaxed text-gray-500 dark:text-gray-400">默认 2 小时未更新后提醒，22:00—09:00 静默；起止时间相同则不设静默时段。按上方生物钟，每天最多提醒 3 次。提醒不抢焦点，5 分钟未响应会自动收起，下次按所选间隔提醒。</p>
-            {(dismissedToday || isSnoozed) && <div className="flex flex-wrap items-center justify-between gap-3 border-t border-sky-100 pt-4 dark:border-sky-900/40">
-              <p role="status" className="text-xs text-sky-700 dark:text-sky-300">{dismissedToday ? '今天已选择休息，主动提醒已暂停。' : `已稍后提醒，暂停至 ${snoozedUntil!.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}。`}</p>
+            <p className="text-xs leading-relaxed text-gray-500 dark:text-gray-400">连续选择稍后，同一任务会按 30、60、120 分钟延后；也可以只让某一项今天不再提醒。先显示桌宠旁的小气泡，点击才展开卡片。</p>
+            {(dismissedToday || isSnoozed || pausedTaskCount > 0) && <div className="flex flex-wrap items-center justify-between gap-3 border-t border-sky-100 pt-4 dark:border-sky-900/40">
+              <p role="status" className="text-xs text-sky-700 dark:text-sky-300">{dismissedToday ? '今天已选择休息，主动提醒已暂停。' : isSnoozed ? `已稍后提醒，暂停至 ${snoozedUntil!.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}。` : `今天已暂停 ${pausedTaskCount} 项任务的提醒。`}</p>
               <button type="button" onClick={() => setState(current => current.proactive ? {
-                ...current, proactive: { ...current.proactive, snoozedUntil: undefined, dismissedDate: undefined },
+                ...current, proactive: { ...current.proactive, snoozedUntil: undefined, dismissedDate: undefined,
+                  ...(current.proactive.taskStates ? { taskStates: Object.fromEntries(Object.entries(current.proactive.taskStates).map(([id, item]) => [id, { ...item, dismissedDate: undefined }])) } : {}) },
               } : current)} className="rounded-lg border border-sky-200 bg-white px-3 py-1.5 text-xs text-sky-700 hover:bg-sky-50 dark:border-sky-800 dark:bg-neutral-900 dark:text-sky-300">恢复主动提醒</button>
-              <p className="w-full text-xs text-gray-500 dark:text-gray-400">恢复后仍遵守开关、静默时段和提醒间隔，不重置当天次数。</p>
+              <p className="w-full text-xs text-gray-500 dark:text-gray-400">恢复今日暂停后仍遵守开关、静默时段和提醒间隔，不重置当天次数或单项稍后时间。</p>
             </div>}
           </section>
 

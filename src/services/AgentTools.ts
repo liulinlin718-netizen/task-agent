@@ -1,6 +1,7 @@
-import type { AppState, Task } from "../Store";
+import type { AppState, Task, TaskContext } from "../Store";
 import type { AgentStore } from "./AgentService";
 import { throwIfAborted } from "./StreamParser";
+import { assertBoundRequest, assertTaskWrite, TaskGuardError } from './TaskGuard';
 
 export type ToolCall = { id: string; type: "function"; function: { name: string; arguments: string } };
 export type ToolResult = { ok: boolean; message: string; data?: unknown; duplicate?: boolean };
@@ -107,12 +108,17 @@ export function createToolExecutor(store: AgentStore, options: {
   sessionId: string;
   assistantMessageId: string;
   activeDate: string;
+  currentDate?: string;
+  taskContext?: TaskContext;
+  requestText?: string;
+  previousRequestText?: string;
   signal?: AbortSignal;
   readOnly?: boolean;
   generateReport: (dates: string[], state: AppState, signal?: AbortSignal) => Promise<string>;
 }) {
   const results = new Map<string, ToolResult>();
   const callIds = new Map<string, { key: string; result: ToolResult }>();
+  let clarificationRequired: string | undefined;
 
   function updateWithEvent(call: ToolCall, result: ToolResult, mutation?: (state: AppState) => AppState) {
     throwIfAborted(options.signal);
@@ -123,6 +129,7 @@ export function createToolExecutor(store: AgentStore, options: {
         if (mutation) throw new Error("原对话或回复已删除，未执行该操作。");
         return state;
       }
+      if (mutation) assertBoundRequest(state, options);
       const next = mutation ? mutation(state) : state;
       const event = { id: crypto.randomUUID(), name: call.function.name, status: result.ok ? "success" as const : "error" as const, message: result.message };
       return { ...next, chatSessions: next.chatSessions.map(item => item.id !== options.sessionId ? item : { ...item, updatedAt: new Date().toISOString(), messages: item.messages.map(message => message.id !== options.assistantMessageId ? message : { ...message, toolEvents: [...(message.toolEvents || []), event] }) }) };
@@ -135,7 +142,7 @@ export function createToolExecutor(store: AgentStore, options: {
     let key = `${name}:${call.function.arguments}`;
     let result: ToolResult;
     try {
-      const args = normalize(name, call.function.arguments, options.activeDate);
+      const args = normalize(name, call.function.arguments, name === 'propose_tasks' && options.taskContext ? options.taskContext.taskDate : options.activeDate);
       key = `${name}:${canonical(args)}`;
       const previousId = callIds.get(call.id);
       if (previousId && previousId.key !== key) throw new Error("同一个工具调用 ID 携带了不同参数，已拒绝执行。");
@@ -147,6 +154,10 @@ export function createToolExecutor(store: AgentStore, options: {
       }
       if (options.readOnly && !["list_tasks", "propose_tasks"].includes(name)) throw new Error("重新生成处于只读模式，只能查询任务或提供待采纳建议，不能修改任务或保存报告。");
       const state = store.getState();
+      if (name !== 'list_tasks') {
+        if (clarificationRequired) throw new TaskGuardError(clarificationRequired);
+        assertBoundRequest(state, options);
+      }
       if (name === "list_tasks") {
         const tasks = state.tasks.filter(task => (!args.date || task.date === args.date) && (!args.startDate || task.date >= args.startDate && task.date <= args.endDate) && (!args.query || task.name.toLocaleLowerCase().includes(args.query.toLocaleLowerCase())));
         result = { ok: true, message: `查询到 ${tasks.length} 项任务。`, data: { tasks: tasks.slice(0, 300), total: tasks.length, truncated: tasks.length > 300 } };
@@ -155,6 +166,7 @@ export function createToolExecutor(store: AgentStore, options: {
         const added: Task[] = [], skipped: string[] = [];
         result = { ok: true, message: "", data: { tasks: added, skipped } };
         updateWithEvent(call, result, current => {
+          assertBoundRequest(current, options);
           const existing = new Set(current.tasks.map(task => `${task.date}\n${task.name.trim()}`));
           for (const task of args.tasks) {
             const taskKey = `${task.date}\n${task.name}`;
@@ -168,12 +180,15 @@ export function createToolExecutor(store: AgentStore, options: {
       } else if (name === "update_task" || name === "delete_task") {
         const task = state.tasks.find(item => item.id === args.taskId);
         if (!task) throw new Error("任务 ID 不存在，请先调用 list_tasks 查询，必要时请用户澄清。");
+        assertTaskWrite(state, args.taskId, name === 'update_task' ? args.updates : undefined, options);
         result = { ok: true, message: name === "delete_task" ? `已删除任务「${task.name}」。` : `已更新任务「${args.updates.name || task.name}」。`, data: name === "delete_task" ? { taskId: task.id } : { task: { ...task, ...args.updates } } };
         updateWithEvent(call, result, current => {
+          assertTaskWrite(current, args.taskId, name === 'update_task' ? args.updates : undefined, options);
           if (!current.tasks.some(item => item.id === args.taskId)) throw new Error("任务已不存在，未执行该操作。");
           return { ...current, tasks: name === "delete_task" ? current.tasks.filter(item => item.id !== args.taskId) : current.tasks.map(item => item.id === args.taskId ? { ...item, ...args.updates } : item) };
         });
       } else if (name === "propose_tasks") {
+        if (options.taskContext && args.taskId && args.taskId !== options.taskContext.taskId) throw new TaskGuardError('建议引用了本次关联之外的任务，请确认关联。');
         if (args.taskId && !state.tasks.some(task => task.id === args.taskId)) throw new Error("要拆解的任务 ID 不存在，请先查询任务。");
         result = { ok: true, message: `已展示 ${args.tasks.length} 项待采纳建议，尚未添加到任务表。`, data: { tasks: args.tasks } };
         updateWithEvent(call, result, current => ({ ...current, chatSessions: current.chatSessions.map(session => session.id !== options.sessionId ? session : { ...session, messages: session.messages.map(message => {
@@ -194,6 +209,7 @@ export function createToolExecutor(store: AgentStore, options: {
       }
     } catch (error) {
       throwIfAborted(options.signal);
+      if (error instanceof TaskGuardError) clarificationRequired ||= error.message;
       result = { ok: false, message: error instanceof Error ? error.message : "工具执行失败。" };
       updateWithEvent(call, result);
     }

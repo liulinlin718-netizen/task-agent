@@ -11,7 +11,9 @@ declare global {
       ballCheckSnap: () => 'left' | 'right' | null;
       reminderAction: (id: string, action: import('./state/proactive').ReminderAction, progress?: number) => { ok: boolean; error?: string };
       ballReady: () => void;
-      onReminderHelp: (callback: (detail: { taskId: string; taskName: string; prompt: string }) => void) => () => void;
+      reminderExpand: (id: string, expanded: boolean) => { ok: boolean; error?: string };
+      onBallPresentation: (callback: (detail: { mode: 'ball' | 'nudge' | 'reminder' | 'chat'; anchor: { x: number; y: number } }) => void) => () => void;
+      onReminderHelp: (callback: (detail: { taskId: string; taskName: string; taskDate: string; prompt: string }) => void) => () => void;
 
       windowMove: (dx: number, dy: number) => void;
       windowDragStart: () => void;
