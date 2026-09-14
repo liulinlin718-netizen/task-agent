@@ -591,7 +591,6 @@ ipcMain.on('proactive:action', (event, id, action, progress) => {
     if (action === 'help') {
       const task = current.tasks.find(item => item.id === active.taskId);
       ballWindow.webContents.send('reminder:help', {
-        taskId: task.id, taskName: task.name, taskDate: task.date,
         prompt: `我在任务“${task.name}”（日期：${task.date}，当前进度：${task.progress}%）上有点卡住了。请先安抚我，帮我拆出一个可完成的小步骤；先给建议，不要直接添加或修改任务。`,
       });
     }

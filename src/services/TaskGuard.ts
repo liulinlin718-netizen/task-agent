@@ -79,7 +79,7 @@ function namedCandidates(tasks: Task[], request: string): Task[] {
 export function assertTaskContextCurrent(state: AppState, context: TaskContext): Task {
   const task = state.tasks.find(item => item.id === context.taskId);
   if (!task || task.name !== context.taskName || task.date !== context.taskDate) {
-    throw new TaskGuardError('关联任务已删除、改名或改期，请重新选择关联任务后再发送。');
+    throw new TaskGuardError('原任务已删除、改名或改期，请补充当前任务名称和日期后再发送。');
   }
   return task;
 }
@@ -95,7 +95,7 @@ export function assertBoundRequest(state: AppState, options: TaskGuardOptions): 
   const request = options.requestText || '';
   const intent = parseTaskDateIntent(request, options.currentDate || options.activeDate);
   if (intent.ambiguous || intent.sourceDate && intent.sourceDate !== bound.date) {
-    throw new TaskGuardError(`本次关联的是 ${bound.date} 的「${bound.name}」，请求中的任务日期不一致或不明确，请先解除/重新选择关联。`);
+    throw new TaskGuardError(`原任务是 ${bound.date} 的「${bound.name}」，请求中的任务日期不一致或不明确，请用文字确认名称和原任务日期。`);
   }
   const candidates = namedCandidates(state.tasks, request);
   if (candidates.some(task => task.id !== bound.id && normalized(task.name) !== normalized(bound.name))) {
@@ -140,6 +140,6 @@ export function assertTaskWrite(state: AppState, taskId: string, updates: Partia
   const clarified = !query && intent.sourceDate && options.previousRequestText ? namedCandidates(scoped, options.previousRequestText) : [];
   const matching = candidates.length ? candidates : !query ? clarified.length ? clarified : scoped : [];
   if (matching.length !== 1 || matching[0].id !== taskId) {
-    throw new TaskGuardError(matching.length > 1 ? '有多项任务匹配这个名称，请用户选择具体任务。' : '无法从本次请求唯一确认任务名称，请用户提供完整名称或选择关联任务。');
+    throw new TaskGuardError(matching.length > 1 ? '有多项任务匹配这个名称，请用户说明完整任务名称和日期。' : '无法从本次请求唯一确认任务名称，请用户提供完整名称和日期。');
   }
 }

@@ -1,4 +1,4 @@
-import type { AppState, ChatMessage, ChatSession, TaskContext } from "../Store";
+import type { AppState, ChatMessage, ChatSession } from "../Store";
 import { AGENT_TOOLS, createToolExecutor, validateDate, type ToolCall, type ToolDefinition } from "./AgentTools";
 import { parseSSEStream, throwIfAborted, withAbort } from "./StreamParser";
 import { buildAgentContext, clipText, historyContent } from "./AgentContext";
@@ -169,7 +169,6 @@ export async function runAgent(text: string, store: AgentStore, options: {
   sessionId: string;
   assistantMessageId: string;
   history?: ChatMessage[];
-  taskContext?: TaskContext;
   requestText?: string;
   signal?: AbortSignal;
   onTextChunk?: (chunk: string) => void;
@@ -191,15 +190,14 @@ export async function runAgent(text: string, store: AgentStore, options: {
   for (let index = placeholderIndex - 1; index >= 0; index--) {
     if (session.messages[index].role === 'user') { sourceUser = { ...session.messages[index] }; break; }
   }
-  const reference = options.taskContext || sourceUser?.taskContext;
-  const taskContext = reference ? { ...reference } : undefined;
-  const { messages } = buildAgentContext({ state, session, history, text, taskContext, currentDate,
+  const { messages } = buildAgentContext({ state, session, history, text, currentDate,
     readOnly: options.readOnly, assistantMessageId: options.assistantMessageId });
   const tools = options.readOnly ? AGENT_TOOLS.filter(tool => ["list_tasks", "propose_tasks"].includes(tool.function.name)) : AGENT_TOOLS;
   const lastAnswer = history.at(-1);
   const previousRequestText = lastAnswer?.role === 'model' && /[?？]|哪一|哪项|哪天|确认|指的是|选择/.test(lastAnswer.text)
     ? [...history].reverse().find(message => message.role === 'user' && !message.contextText)?.text : undefined;
-  const execute = createToolExecutor(store, { ...options, taskContext, requestText: options.requestText ?? text, previousRequestText,
+  const execute = createToolExecutor(store, { sessionId: options.sessionId, assistantMessageId: options.assistantMessageId,
+    readOnly: options.readOnly, requestText: options.requestText ?? text, previousRequestText,
     activeDate: state.activeDate, currentDate, signal, generateReport: generateCustomSummary });
   let reply = "";
   let callCount = 0;

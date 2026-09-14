@@ -47,7 +47,11 @@ test('explicit today follows the real logical day even while viewing historical 
 test('pinyin cannot redirect an explicit today completion to a future generic task', () => {
   const state = fixture();
   assert.throws(() => assertTaskWrite(state, 'interview-future', { progress: 100 }, options('今天jieyuexingchen面完了')), /原任务日期/);
-  assert.throws(() => assertTaskWrite(state, 'interview-today', { progress: 100 }, options('今天jieyuexingchen面完了')), /完整名称|关联任务/);
+  assert.throws(() => assertTaskWrite(state, 'interview-today', { progress: 100 }, options('今天jieyuexingchen面完了')), error => {
+    assert.match(String(error), /完整名称和日期/);
+    assert.doesNotMatch(String(error), /关联|选择/);
+    return true;
+  });
   assert.doesNotThrow(() => assertTaskWrite(state, 'interview-today', { progress: 100 }, options('今天面阶跃星辰完成了')));
 });
 
@@ -92,7 +96,7 @@ test('deleted, renamed or rescheduled bindings are stale but ordinary progress c
     (state: ReturnType<typeof fixture>) => { state.tasks[0].date = tomorrow; },
   ]) {
     const state = fixture(); mutate(state);
-    assert.throws(() => assertBoundRequest(state, options('完成了', context)), /重新选择/);
+    assert.throws(() => assertBoundRequest(state, options('完成了', context)), /当前任务名称和日期/);
   }
   const state = fixture(); state.tasks[0].progress = 70;
   assert.doesNotThrow(() => assertTaskWrite(state, 'fitness', { progress: 100 }, options('完成了', context)));

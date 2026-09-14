@@ -201,7 +201,8 @@ test('help opens a pinned-ready composer draft only after the reminder action sa
   desktop.advance(250);
   assert.deepEqual([desktop.ball.bounds.width, desktop.ball.bounds.height], [380, 520]);
   const help = desktop.ball.sent.find(event => event.name === 'reminder:help');
-  assert.equal(help.value.taskId, 't1'); assert.match(help.value.prompt, /阅读文献.*日期：2026-09-11.*0%/);
+  assert.deepEqual(Object.keys(help.value), ['prompt']);
+  assert.match(help.value.prompt, /阅读文献.*日期：2026-09-11.*0%/);
   assert.match(help.value.prompt, /不要直接添加或修改/);
   assert.equal(desktop.state().proactive.active, undefined);
   assert.equal(desktop.ball.focuses, 0);

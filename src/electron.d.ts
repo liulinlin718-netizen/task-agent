@@ -13,7 +13,7 @@ declare global {
       ballReady: () => void;
       reminderExpand: (id: string, expanded: boolean) => { ok: boolean; error?: string };
       onBallPresentation: (callback: (detail: { mode: 'ball' | 'nudge' | 'reminder' | 'chat'; anchor: { x: number; y: number } }) => void) => () => void;
-      onReminderHelp: (callback: (detail: { taskId: string; taskName: string; taskDate: string; prompt: string }) => void) => () => void;
+      onReminderHelp: (callback: (detail: { prompt: string }) => void) => () => void;
 
       windowMove: (dx: number, dy: number) => void;
       windowDragStart: () => void;
