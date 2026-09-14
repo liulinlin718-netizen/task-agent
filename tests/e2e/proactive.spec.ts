@@ -176,8 +176,8 @@ test('stuck guidance enters the shared chat with the actual task and waits for t
   await ball.getByRole('button', { name: '展开任务进度提醒', exact: true }).click();
   await ball.getByRole('button', { name: '有点卡住了', exact: true }).click();
   const input = ball.getByRole('textbox', { name: '悬浮球对话输入', exact: true });
-  await expect(ball.getByRole('combobox', { name: '当前关联任务与日期' })).toHaveValue('stale-paper');
-  await expect(ball.getByText(`正在聊：论文初稿 · ${(await desktop.read()).activeDate}`, { exact: true })).toBeVisible();
+  await expect(ball.getByRole('combobox')).toHaveCount(0);
+  await expect(ball.getByText(/正在聊：/)).toHaveCount(0);
   await expect(input).toHaveValue(/论文初稿/);
   await expect(input).toHaveValue(/日期：.*当前进度：20%/);
   await expect(input).not.toHaveValue(/stale-paper/);
@@ -188,7 +188,7 @@ test('stuck guidance enters the shared chat with the actual task and waits for t
   expect(desktop.requests[0].tools.some((tool: any) => tool.function.name === 'update_task')).toBe(true);
   expect((await desktop.read()).tasks[0].progress).toBe(20);
   const userMessage = (await desktop.read()).chatSessions[0].messages.find(message => message.role === 'user');
-  expect(userMessage?.taskContext).toMatchObject({ taskId: 'stale-paper', taskName: '论文初稿' });
+  expect(userMessage?.taskContext).toBeUndefined();
   await expect.poll(() => ball.getByText('卡住也没关系。先用五分钟写下论文的一个小标题，再告诉我进展。', { exact: true }).evaluate(element => {
     let current: Element | null = element;
     while (current) { if (Number(getComputedStyle(current).opacity) < 1) return false; current = current.parentElement; }
@@ -299,26 +299,36 @@ for (const edge of ['left', 'right'] as const) {
   });
 }
 
-test('chat shows a task binding, detects external rescheduling and lets the user reselect or clear it', async ({ desktop }) => {
+test('chat continues legacy conversations without a task selector or persistent binding', async ({ desktop }, info) => {
+  await desktop.main.evaluate(() => {
+    const before = window.electronAPI!.storeGet()!;
+    const state = JSON.parse(before);
+    const session = state.chatSessions.find((item: any) => item.id === state.activeChatSessionId);
+    session.messages.push({ id: 'legacy-user', role: 'user', text: '这项任务先聊到这里。',
+      taskContext: { taskId: 'deleted-task', taskName: '旧关联任务', taskDate: '2026-09-01' } });
+    session.messages.push({ id: 'legacy-reply', role: 'model', text: '好的，我们也可以聊别的。' });
+    if (!window.electronAPI!.storeCommit(JSON.stringify(state), before)) throw new Error('save failed');
+  });
   const ball = await desktop.ball();
   await ball.getByRole('button', { name: '打开悬浮球对话', exact: true }).click();
   await ball.getByRole('button', { name: '固定在桌面', exact: true }).click();
-  const selection = ball.getByRole('combobox', { name: '当前关联任务与日期', exact: true });
-  await selection.selectOption('stale-paper');
-  const date = (await desktop.read()).activeDate;
-  await expect(ball.getByText(`正在聊：论文初稿 · ${date}`, { exact: true })).toBeVisible();
-  await desktop.main.evaluate(() => {
-    const before = window.electronAPI!.storeGet()!;
-    const state = JSON.parse(before); state.tasks[0].date = '2030-01-01';
-    if (!window.electronAPI!.storeCommit(JSON.stringify(state), before)) throw new Error('save failed');
-  });
-  await expect(ball.getByText('任务已变更或删除，请重新选择；修改前会先确认。', { exact: true })).toBeVisible();
-  await expect(selection).toHaveValue('__stale__');
-  await selection.selectOption('stale-paper');
-  await expect(ball.getByText('正在聊：论文初稿 · 2030-01-01', { exact: true })).toBeVisible();
-  await selection.selectOption('');
-  await expect(selection).toHaveValue('');
-  await expect(ball.getByText('正在聊：论文初稿 · 2030-01-01', { exact: true })).toHaveCount(0);
+  await expect(ball.getByRole('combobox')).toHaveCount(0);
+  await expect(ball.getByText(/当前关联任务|正在聊：|旧关联任务/)).toHaveCount(0);
+  await expect(ball.getByText('这项任务先聊到这里。', { exact: true })).toBeVisible();
+  const input = ball.getByRole('textbox', { name: '悬浮球对话输入', exact: true });
+  await input.fill('先不聊任务了，随便聊聊。');
+  await ball.getByRole('button', { name: '发送消息', exact: true }).click();
+  await expect(ball.getByText('卡住也没关系。先用五分钟写下论文的一个小标题，再告诉我进展。', { exact: true })).toBeVisible();
+  expect(desktop.requests).toHaveLength(1);
+  const messages = (await desktop.read()).chatSessions[0].messages;
+  expect(messages.find(message => message.id === 'legacy-user')?.taskContext?.taskId).toBe('deleted-task');
+  expect(messages.find(message => message.text === '先不聊任务了，随便聊聊。')?.taskContext).toBeUndefined();
+  await ball.getByRole('button', { name: '收起悬浮球对话', exact: true }).click();
+  await ball.getByRole('button', { name: '打开悬浮球对话', exact: true }).click();
+  await ball.getByRole('button', { name: '固定在桌面', exact: true }).click();
+  await expect(ball.getByRole('combobox')).toHaveCount(0);
+  await expect(input).toBeVisible();
+  await ball.screenshot({ path: info.outputPath('simple-pet-chat.png') });
 });
 
 

@@ -1,7 +1,7 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { Send, Sparkles, Pin, PinOff, Check, Minus } from 'lucide-react';
-import { StoreProvider, useStore, type TaskContext } from '../Store';
+import { StoreProvider, useStore } from '../Store';
 import { useAgentChat } from '../hooks/useAgentChat';
 import { ToolActivity } from './ToolActivity';
 import { ReminderCard } from './ReminderCard';
@@ -16,7 +16,6 @@ function FloatingBallContent() {
   const [nearEdge, setNearEdge] = useState(false);
   const [notice, setNotice] = useState('');
   const [helpDraft, setHelpDraft] = useState<{ id: string; text: string } | null>(null);
-  const [taskContext, setTaskContext] = useState<TaskContext | undefined>();
   const [presentation, setPresentation] = useState<{ mode: string; anchor: { x: number; y: number } }>({ mode: 'ball', anchor: { x: 280, y: 64 } });
   const noticeTimer = useRef<number | null>(null);
   const dragStartOffset = useRef({ x: 0, y: 0 });
@@ -92,14 +91,11 @@ function FloatingBallContent() {
 
   const consumeHelpDraft = useCallback(() => setHelpDraft(null), []);
 
-  useEffect(() => { setTaskContext(undefined); }, [state.activeChatSessionId]);
-
   useEffect(() => {
     const unsubscribePresentation = window.electronAPI?.onBallPresentation(detail => setPresentation(detail));
     const unsubscribe = window.electronAPI?.onReminderHelp(detail => {
       clearCollapseTimer();
       setHelpDraft({ id: crypto.randomUUID(), text: detail.prompt });
-      setTaskContext({ taskId: detail.taskId, taskName: detail.taskName, taskDate: detail.taskDate });
       setIsPinned(true);
       setExpanded(true);
     });
@@ -131,7 +127,7 @@ function FloatingBallContent() {
   // Auto-collapse on mouse leave if not pinned
   const handlePanelMouseLeave = () => {
     if (!isPinned && expanded) {
-      if (['INPUT', 'TEXTAREA', 'SELECT'].includes(document.activeElement?.tagName || '')) return;
+      if (['INPUT', 'TEXTAREA'].includes(document.activeElement?.tagName || '')) return;
       clearCollapseTimer();
       collapseTimer.current = window.setTimeout(handleCollapse, 400);
     }
@@ -204,7 +200,7 @@ function FloatingBallContent() {
               boxShadow: '0 8px 40px rgba(0,0,0,0.5)',
             }}
           >
-            <ChatPanel isPinned={isPinned} onTogglePin={() => setIsPinned(p => !p)} onCollapse={handleCollapse} helpDraft={helpDraft} onDraftConsumed={consumeHelpDraft} taskContext={taskContext} onTaskContextChange={setTaskContext} />
+            <ChatPanel isPinned={isPinned} onTogglePin={() => setIsPinned(p => !p)} onCollapse={handleCollapse} helpDraft={helpDraft} onDraftConsumed={consumeHelpDraft} />
           </motion.div>
         )}
       </AnimatePresence>
@@ -212,14 +208,12 @@ function FloatingBallContent() {
   );
 }
 
-function ChatPanel({ isPinned, onTogglePin, onCollapse, helpDraft, onDraftConsumed, taskContext, onTaskContextChange }: {
+function ChatPanel({ isPinned, onTogglePin, onCollapse, helpDraft, onDraftConsumed }: {
   isPinned: boolean;
   onTogglePin: () => void;
   onCollapse: () => void;
   helpDraft: { id: string; text: string } | null;
   onDraftConsumed: () => void;
-  taskContext?: TaskContext;
-  onTaskContextChange: (context: TaskContext | undefined) => void;
 }) {
   const { state, acceptProposedTask, acceptAllProposedTasks } = useStore();
   const { busy: isTyping, send, stop } = useAgentChat();
@@ -242,12 +236,10 @@ function ChatPanel({ isPinned, onTogglePin, onCollapse, helpDraft, onDraftConsum
     e.preventDefault();
     if (!input.trim() || isTyping) return;
     const text = input.trim(); setInput(''); setIsHelpDraft(false);
-    await send(text, undefined, taskContext);
+    await send(text);
   };
 
   const msgs = (session?.messages || []).slice(-20);
-  const boundTask = state.tasks.find(task => task.id === taskContext?.taskId);
-  const staleContext = taskContext && (!boundTask || boundTask.name !== taskContext.taskName || boundTask.date !== taskContext.taskDate);
 
   return (
     <>
@@ -294,23 +286,6 @@ function ChatPanel({ isPinned, onTogglePin, onCollapse, helpDraft, onDraftConsum
         </div>
       </div>
 
-      <div className="shrink-0 border-b border-white/5 bg-white/[0.03] px-3 py-2 text-[11px]">
-        <label htmlFor="ball-task-context" className="mb-1 block text-white/40">当前关联任务与日期</label>
-        <select id="ball-task-context" aria-label="当前关联任务与日期" value={staleContext ? '__stale__' : taskContext?.taskId || ''}
-          disabled={isTyping}
-          onChange={event => {
-            const task = state.tasks.find(item => item.id === event.target.value);
-            onTaskContextChange(task ? { taskId: task.id, taskName: task.name, taskDate: task.date } : undefined);
-          }} className="w-full rounded-lg border border-white/10 bg-[#20212b] px-2 py-1.5 text-white/80 outline-none focus:ring-1 focus:ring-blue-500">
-          <option value="">未关联任务 · 按对话确认</option>
-          {staleContext && <option value="__stale__" disabled>{taskContext.taskName} · {taskContext.taskDate}（已变更）</option>}
-          {[...state.tasks].sort((a, b) => b.date.localeCompare(a.date)).map(task => <option key={task.id} value={task.id}>{task.name} · {task.date}{task.progress >= 100 ? ' · 已完成' : ''}</option>)}
-        </select>
-        {taskContext && <p className={`mt-1 ${staleContext ? 'text-amber-300' : 'text-blue-300/70'}`}>
-          {staleContext ? '任务已变更或删除，请重新选择；修改前会先确认。' : `正在聊：${taskContext.taskName} · ${taskContext.taskDate}`}
-        </p>}
-      </div>
-
       <div className="flex-1 overflow-y-auto px-4 py-3 space-y-3 hide-scrollbar">
         {msgs.map((msg, i) => (
           <motion.div key={msg.id + i} initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }}
@@ -318,7 +293,6 @@ function ChatPanel({ isPinned, onTogglePin, onCollapse, helpDraft, onDraftConsum
             <div className={`max-w-[85%] px-3 py-2 text-xs leading-relaxed rounded-xl ${
               msg.role === 'user' ? 'bg-blue-500/80 text-white rounded-tr-sm' : 'bg-white/[0.06] text-white/85 rounded-tl-sm border border-white/5'
             }`}>
-              {msg.taskContext && <div className="mb-1 border-b border-white/15 pb-1 text-[10px] text-white/60">{msg.taskContext.taskName} · {msg.taskContext.taskDate}</div>}
               <div className="prose prose-sm prose-invert break-words max-w-full [&_p]:my-0.5"><Markdown>{msg.text}</Markdown></div>
               <ToolActivity events={msg.toolEvents} memoryStatus={msg.memoryStatus} />
               {!!msg.proposedTasks?.length && !msg.proposedTasksDismissed && <div className="mt-2 space-y-2">

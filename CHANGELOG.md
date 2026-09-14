@@ -1,5 +1,13 @@
 # 更新日志
 
+## [2.2.1] - 2026-09-14
+
+### 改进
+
+- 简化桌宠对话，移除任务关联选择框、“正在聊”状态和历史消息绑定标签，新消息不再显式绑定任务。
+- “有点卡住了”生成包含任务名称、日期和当前进度的普通可编辑草稿，由用户发送后再请求 AI；名称与日期不明确时仍会追问。
+- 保留历史任务引用数据的读取兼容，不删除已有会话或任务数据。
+
 ## [2.2.0] - 2026-09-13
 
 ### 新增
@@ -49,6 +57,7 @@
 
 历史发布版本。具体内容见 [原始 Release](https://github.com/liulinlin718-netizen/task-agent/releases/tag/v2.0.0)。
 
+[2.2.1]: https://github.com/liulinlin718-netizen/task-agent/releases/tag/v2.2.1
 [2.2.0]: https://github.com/liulinlin718-netizen/task-agent/releases/tag/v2.2.0
 [2.1.0]: https://github.com/liulinlin718-netizen/task-agent/releases/tag/v2.1.0
 [2.0.0]: https://github.com/liulinlin718-netizen/task-agent/releases/tag/v2.0.0

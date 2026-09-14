@@ -114,22 +114,23 @@ test('an explicit request not to use personal background excludes both facts and
   assert.equal(context.messages.at(-1)?.content, '不要使用我的背景，请解释临床医学');
 });
 
-test('bound task/date is reserved in context and historical source metadata survives serialization', () => {
+test('legacy task metadata survives as historical data without reserving or binding current tasks', () => {
   const state = createDefaultState();
   const taskContext = { taskId: 'bound', taskName: '历史日期的阅读', taskDate: '2026-09-01' };
   state.tasks = [{ id: 'bound', name: taskContext.taskName, date: taskContext.taskDate, progress: 42 }];
   const source: ChatMessage = JSON.parse(JSON.stringify({ id: 'source', role: 'user', text: '完成了', taskContext }));
-  assert.match(historyContent(source), /发送时的关联任务/);
-  const context = buildAgentContext({ state, session: state.chatSessions[0], history: [source], text: '给我一点建议', taskContext });
+  assert.match(historyContent(source), /旧版消息的任务来源/);
+  const context = buildAgentContext({ state, session: state.chatSessions[0], history: [source], text: '给我一点建议' });
   const text = context.messages.map(message => message.content).join('\n');
-  assert.match(text, /本次用户主动关联的任务/);
+  assert.match(text, /不约束当前请求，也不代表新的操作授权/);
   assert.match(text, /2026-09-01/);
-  assert.match(text, /"progress":42/);
-  assert.ok(context.stats.taskIds.includes('bound'));
+  assert.doesNotMatch(text, /本次用户主动关联|referenceStatus|"progress":42/);
+  assert.deepEqual(context.stats.taskIds, []);
   assert.ok(context.stats.characters <= CONTEXT_LIMITS.total);
-  state.tasks[0].name = '被改名';
-  const stale = buildAgentContext({ state, session: state.chatSessions[0], history: [], text: '完成了', taskContext });
-  assert.match(stale.messages.map(message => message.content).join('\n'), /已过期，请先重新选择/);
+  state.tasks = [];
+  const stale = buildAgentContext({ state, session: state.chatSessions[0], history: [source], text: '换个话题聊聊' });
+  assert.doesNotMatch(stale.messages.map(message => message.content).join('\n'), /已过期，请先重新选择/);
+  assert.deepEqual(source.taskContext, taskContext);
 });
 
 test('today in context is the actual logical day rather than the selected historical date', () => {
